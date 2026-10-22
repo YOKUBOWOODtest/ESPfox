@@ -52,6 +52,7 @@ Source routes with no local counterpart, deleted rather than left as dead links:
 - **Boards copy the original screen.** `/board/<id>` is a faithful rebuild of the source's board (see *Board screen* below). `/board/new` mints an id and rewrites the URL. Gallery cards link to `/board/post-<id>`. Share links use `https://whiteboardmod.com`.
 - **Gallery tabs removed.** The page always renders the post grid; there is no `#top-posts-tab`, no `#followers-posts-tab` and no "Sign in to check out posts" notice.
 - **Pro changes the options panel.** Non-Pro still sends `force-auth-participants=true`; Pro sends `false`. `my followers` is disabled everywhere (no followers concept).
+- **The board is also a room.** Whiteboard Mod mixes whiteboardfox (the drawing) with here.fm (the room): a room bar under the board's **Clear** button (invite, chat, reaction, mic) and a here.fm-style chat bar along the bottom of the board. See *Room layer* below.
 
 ## Hero (measured at 800px viewport, source)
 
@@ -115,7 +116,7 @@ Measured from the live reference `https://r9.whiteboardfox.com/96635256-2598-448
 | Menu buttons | seven 140×70 at y 0…420 | seven 140×70 at y 0…420 |
 | Button label | 13px, `color:#000` | 13px, `rgb(0,0,0)` |
 | Active tool | `1px inset #666666` | `1px inset rgb(102,102,102)` |
-| `#canvasId` | 140,0 860×700 | 140,0 860×700 |
+| `#canvasId` | 140,0 860×700 | 140,0 860×648² |
 | `#colorsPanel` | grey plate, 1px black border, 7×70px cells | same, 70×70 cells |
 | User row | 60px | 60px |
 | `.userName` | `#0066cc`, width 200px | `rgb(0,102,204)`, 200px |
@@ -139,6 +140,33 @@ Toolbar glyphs are the source's own PNGs (`Undo`, `Eraser`, `Move`, `Select`, `C
 
 Deliberate differences: pan/zoom, lasso, per-item erase and `Who drew what?` need the GWT engine and the server-side document, so the buttons reproduce appearance and state while drawing, undo and clear fully work. Participants beyond the visitor are deterministic rows derived from the board id. The share link reads `https://whiteboardmod.com/board/<id>`.
 
+## Room layer (here.fm)
+
+The board is also a room. The reference was `https://again.here.fm/1875608d-1773-4407-af88-db7dd3f7c33f` — the room no longer exists, but its DOM and stylesheet were inspected before it went, and they describe the layout that was copied. here.fm is the functional spec; whiteboardfox's board stays the substrate, and the accent stays coral.
+
+Facts taken from the reference room's own stylesheet:
+
+| Element | Reference (here.fm) | Clone |
+| --- | --- | --- |
+| Bottom bar | avatar · `@` · emoji · "Say something..." | same, plus a mic chip and a **Send** button |
+| Chat bubbles | `background: #fff`, `border-radius: 10px`, `box-shadow: 0 0 13px rgba(0,0,0,.5)` | same, with the author line in coral |
+| Message column | `#room-messages` floats; `#room-message-list` is `width: fit-content` | floats over the canvas on the right, 320px wide |
+| Invite popover | bold 14px title | "Invite people", bold 14px |
+| Primary colour | `#6b1be3` | **not used** — coral `#e0533f` |
+
+Measured on the clone at a 1000×700 viewport:
+
+| Element | Clone |
+| --- | --- |
+| Room bar | 140 wide at x=0, y=490…582 — directly under the Clear button (y=420…490) |
+| Room buttons | four 30×30 circles, `rgb(224,83,63)`, `border-radius: 50%`, at x = 4 / 38 / 72 / 106, y = 526 |
+| Mic meter | 132×6 at (4, 564) |
+| Chat bar | 860×52 at (140, 648) — the canvas is 52px shorter than the viewport, so the bar never covers a drawing |
+| Chat input | 320×32 at (595, 659); **Send** at (925, 659) |
+| Message bubbles | 320 wide, right-floated at x=664 |
+
+The room is stored per board in `localStorage` under `wf_room_<boardId>` and mirrored to the other tabs of the same browser through the `storage` event.
+
 ## Verification
 
 `npm run check` passes: ESLint clean, `tsc --noEmit` clean, `next build` prerenders 8 static routes (`/`, `/pro`, `/account`, `/lobby`, `/options`, `/privacy`, `/terms`, `/_not-found`) plus the dynamic `/board/[id]`.
@@ -159,6 +187,8 @@ Geometry re-measured on the clone at a 1000px viewport against the source's numb
 | Pagination | 878×34 | 878×34 |
 
 ¹ 30px higher because the source's ad iframe adds height above the gallery; the ad itself is not reproduced.
+
+² The clone's canvas is 52px shorter than the source's because the here.fm-style chat bar is part of the board's layout, not an overlay — it must never cover a drawing.
 
 Pixel-diff (`docs/design-references/comparison.png`) residuals sit at y 400–499 (29%) and y 600–699 (28%). Those bands are the intentionally empty ad column (`#FCFCFC`) and the ad-driven vertical offset, plus font rasterisation differences and the gallery thumbnails' own pixel content — not layout drift.
 
@@ -193,7 +223,7 @@ Verified for this round's changes:
 - **Start Drawing, with profile** → `#optionsEl` becomes `visible` with no `[data-testid="user-type-query"]` and no fun/work buttons; the form is the visible state.
 - **Create Whiteboard** → lands on `/board/<minted id>`; `wf_joined_boards` gains the entry.
 - **Board identity** → the board inherits the stored nickname; the users panel's first row is `<nickname> (You)` and `.userName` resolves to `rgb(0, 102, 204)`.
-- **Board geometry (vs. the reference board)** → `#menuStrip` measures 140×700 at (0,0) with `background-color: rgb(238, 238, 238)` in `column` flow; `#canvasId` measures 860×700 at x=140; the seven `.menu-button`s are 140×70 at y = 0, 70, 140, 210, 280, 350, 420 with 13px labels; the active tool carries `1px inset rgb(102, 102, 102)`.
+- **Board geometry (vs. the reference board)** → `#menuStrip` measures 140×700 at (0,0) with `background-color: rgb(238, 238, 238)` in `column` flow; `#canvasId` measures 860×648 at x=140 (648 = 700 − the 52px chat bar); the seven `.menu-button`s are 140×70 at y = 0, 70, 140, 210, 280, 350, 420 with 13px labels; the active tool carries `1px inset rgb(102, 102, 102)`.
 - **Board palette** → clicking `Draw` opens `[data-testid="colorsPanel"]` (7 cells, 70×70, 1px solid black border on `rgb(238,238,238)`), and the seven `path[fill]` values equal the live DOM's `#4a4a4aff`, `#2761a4ff`, `#44bff2ff`, `#c1086cff`, `#98bb13ff`, `#ac90e3ff`, `#e6b82eff`.
 - **Board users panel** → rows are 60px with a `.avatar-container` SVG (`#FFFFFF88` + `hsl(h, 75%, 43%)` circles), status dots resolve to `rgb(0, 192, 4)` (online) and `rgb(131, 94, 255)` (pro), `.usersScrollArea` / `#usersTable` / `.usersSearchBox` are present, and both `.whoDrewBtn`s read `Who drew what?` and `Search user`.
 - **Board drawing** → a synthetic pointer drag paints 1870 pixels on `#canvasId`; `Undo` returns the alpha channel to 0.
@@ -204,6 +234,12 @@ Verified for this round's changes:
 - **Gallery** → the first card's href is `/board/post-1487764`; there are 0 links to `whiteboardfox.com` anywhere in the app.
 - **Footer** → `Privacy Policy` → `/privacy` and `Terms of Service` → `/terms`, both rendering locally with the real chrome.
 - **Removed UI** → no `Pricing` / `Sign In` links, no `a[href="/pricing"]` / `a[href="/login"]`, no login text, no fun/work text.
+- **Room bar** → `[data-testid="room-bar"]` measures 140 wide at y=490, exactly where the Clear button ends; the four controls (invite, chat, emoji, mic) are 30×30 circles in `rgb(224,83,63)` at x = 4/38/72/106, with the level meter underneath.
+- **Invite** → the popover opens below the button and `[data-testid="room-invite-link"]` reads `https://whiteboardmod.com/board/<id>` — the board's own address.
+- **Chat** → typing in `[data-testid="room-chat-input"]` and pressing **Send** renders one bubble with the text, and `localStorage` gains exactly one `wf_room_*` key.
+- **Reaction** → picking an emoji puts one `[data-testid="room-reaction"]` element floating over the canvas.
+- **Reload** → the room is still there after a reload; the conversation survives in `localStorage`.
+- **Chat bar** → 860×52 at (140, 648) with the avatar, the nickname, the `@`, the emoji button, the "Say something..." field and **Send**; the canvas buffer is 1360×898 at a 1500×950 viewport, i.e. 52px shorter than the window.
 
 ## Not reproduced (disclosed)
 
@@ -212,6 +248,7 @@ Verified for this round's changes:
 - The `user_type` cookie is no longer used: the fun/work question was removed, so `wf_user_type` is gone.
 - **Authentication is replaced, not reproduced.** The source's `login.jsp` / Firebase sign-in flow is gone; identity is the `wf_device_id` device id and the Lobby is the only entry point. This is intentional per the local customisations above — it is what allows `force-auth-participants=false` so invited participants need no account.
 - **The board is not networked.** There is no collaboration server: strokes live in a ref and are not persisted or shared, and the other participants are deterministic demo rows derived from a hash of the board id. The screen itself is an identical copy — only the transport is missing. `Create Whiteboard` / `More Options` no longer hand off to the source's `diagramName` / `options.jsp`.
+- **The room is browser-local.** here.fm talks over a websocket; here the conversation and reactions live in `localStorage` and reach the other tabs of the *same* browser through the `storage` event. Two people on two machines do not share a room yet, and the microphone is a local level meter rather than a voice stream.
 - **Board pan/zoom, lasso, per-item erase and `Who drew what?` are not functional.** They require the GWT engine and the server-side document. The buttons reproduce the original's appearance and active state; drawing, undo and clear work.
 - **The fun/work branch was deleted.** `wf_user_type`, `use-user-type.ts` and the two glyph icons are gone; the Options overlay has one path.
 - **Pro is client-only.** `wf_pro` lives in `localStorage`: activation is per-device, syncs nowhere, and does not contact the live site. There is no plan, price, billing or gateway.

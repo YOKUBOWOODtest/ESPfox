@@ -699,7 +699,10 @@ button.whoDrewBtn:hover {
   /* A canvas has an intrinsic 300x150 size; without this the flex item refuses
      to shrink below it and overflows the viewport. */
   min-width: 0;
-  height: 100%;
+  /* The canvas sits in a column with the room's chat bar under it, so it takes
+     the height that is left rather than the height of the whole board. */
+  min-height: 0;
+  height: auto;
   cursor: default;
   display: block;
   touch-action: none;
@@ -719,6 +722,421 @@ button.whoDrewBtn:hover {
 
 #canvasId.cursor-grab:active {
   cursor: grabbing;
+}
+
+/* --- The room: the here.fm half of Whiteboard Mod -------------------------- */
+
+/*
+ * A board is a room: people join it, they talk in it and they react in it.
+ * here.fm does that over a websocket; this build keeps the room in the
+ * browser, so it is shared with the other tabs of the same board and with
+ * nobody else.
+ *
+ * The layout follows here.fm: the canvas stands in for the video wall, the
+ * conversation floats over it on the right, and a bar with the avatar and a
+ * "Say something..." field runs along the bottom. The bar is part of the
+ * board's layout rather than an overlay, so it never covers a drawing.
+ */
+
+.wm-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- Room bar, under the board's tools ------------------------------------- */
+
+.roomBar {
+  /* The room block sits right under the Clear button, the way here.fm's room
+     bar sits under the board's own tools. */
+  position: relative;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 4px 12px;
+  border-top: 1px solid #dcdcdc;
+  background: #f6f6f6;
+}
+
+.roomBarTitle {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #8a8a8a;
+}
+
+.roomBarRow {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+
+.roomButtonWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.roomIconButton {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-brand);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.roomIconButton:hover {
+  background: var(--color-brand-dark);
+}
+
+.roomIconButton.is-live {
+  background: #2fa84f;
+}
+
+.roomIconButton.is-live:hover {
+  background: #268f42;
+}
+
+.roomBadge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--color-brand-dark);
+  color: #ffffff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* The microphone's level meter, like here.fm's next to the avatar. */
+.roomMicMeter {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: #dedede;
+  overflow: hidden;
+}
+
+.roomMicFill {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, #7bd88f, var(--color-brand));
+  transform-origin: left center;
+  transform: scaleX(0.04);
+  transition: transform 80ms linear;
+}
+
+/* --- Room popovers --------------------------------------------------------- */
+
+.roomPopover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 10;
+  background: #ffffff;
+  border: 1px solid #dcdcdc;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  padding: 12px;
+}
+
+/* The pickers that hang off the chat bar open upwards, into the board. */
+.roomPopoverUp {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
+.roomInvite {
+  width: 260px;
+}
+
+.roomPopoverTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-brand);
+  margin-bottom: 6px;
+}
+
+.roomPopoverText {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #555555;
+}
+
+.roomInviteLink {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #d0d0d0;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 12px;
+  color: #333333;
+  background: #fafafa;
+}
+
+.roomPopoverButton {
+  margin-top: 8px;
+  width: 100%;
+  height: 30px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--color-brand);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.roomPopoverButton:hover {
+  background: var(--color-brand-dark);
+}
+
+.roomEmojiGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 34px);
+  gap: 4px;
+  padding: 8px;
+}
+
+.roomEmojiButton {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.roomEmojiButton:hover {
+  background: var(--color-brand-tint);
+}
+
+.roomEmojiClose {
+  font-size: 14px;
+  color: #777777;
+}
+
+/* --- Chat bar, along the bottom of the board -------------------------------- */
+
+.roomChatBar {
+  flex: 0 0 auto;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  background: #f2f2f2;
+  border-top: 1px solid #dcdcdc;
+}
+
+.roomChatBarInner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.roomAvatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.roomChatName {
+  font-size: 14px;
+  color: #333333;
+  white-space: nowrap;
+}
+
+.roomMicChip {
+  width: 22px;
+  height: 8px;
+  border-radius: 4px;
+  background: #dcdcdc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.roomMicDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b9b9b9;
+}
+
+.roomMicChip[data-state="on"] .roomMicDot {
+  background: #2fa84f;
+}
+
+.roomMicChip[data-state="denied"] .roomMicDot,
+.roomMicChip[data-state="unavailable"] .roomMicDot {
+  background: var(--color-brand);
+}
+
+.roomChatSpacer {
+  flex: 1 1 auto;
+}
+
+.roomChip {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid #d0d0d0;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #444444;
+  font-family: inherit;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.roomChip:hover {
+  background: var(--color-brand-tint);
+}
+
+.roomChatInput {
+  width: 320px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid #d0d0d0;
+  border-radius: 16px;
+  background: #ffffff;
+  font-family: inherit;
+  font-size: 14px;
+  color: #222222;
+}
+
+.roomChatInput:focus {
+  outline: none;
+  border-color: var(--color-brand);
+}
+
+.roomChatSend {
+  height: 32px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--color-brand);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.roomChatSend:hover {
+  background: var(--color-brand-dark);
+}
+
+/* --- The conversation, floating over the canvas ----------------------------- */
+
+.roomMessages {
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  width: 320px;
+  max-height: 46%;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.roomMessagesInner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.roomMessage {
+  background: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 0 13px rgba(0, 0, 0, 0.28);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: auto;
+}
+
+.roomMessageAuthor {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-brand);
+}
+
+.roomMessageText {
+  font-size: 14px;
+  line-height: 1.35;
+  color: #222222;
+  overflow-wrap: anywhere;
+}
+
+/* --- Reactions, floating up over the board ---------------------------------- */
+
+.roomReactions {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.roomReaction {
+  position: absolute;
+  bottom: 64px;
+  font-size: 40px;
+  line-height: 1;
+  animation: roomReactionFloat 4.5s ease-out forwards;
+}
+
+@keyframes roomReactionFloat {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6);
+  }
+  12% {
+    opacity: 1;
+    transform: translateY(-10px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-320px) scale(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roomReaction {
+    animation-duration: 1ms;
+  }
 }
 
 /* --- User options dropdown ----------------------------------------------- */

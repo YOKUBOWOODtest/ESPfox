@@ -176,11 +176,18 @@ async function main() {
   const geo = await evaluate(`(() => {
     const c = document.querySelector('[data-testid="boardCanvas"]');
     const r = c.getBoundingClientRect();
-    return { left: r.left, top: r.top, bufW: c.width, bufH: c.height };
+    const bar = document.querySelector('[data-testid="room-chat-bar"]');
+    return {
+      left: r.left,
+      top: r.top,
+      bufW: c.width,
+      bufH: c.height,
+      barH: bar ? bar.getBoundingClientRect().height : 0,
+    };
   })()`);
   check(
     "canvas buffer sized to the viewport",
-    geo.bufW === 1360 && geo.bufH === 950,
+    geo.bufW === 1360 && geo.bufH === 950 - geo.barH,
     JSON.stringify(geo),
   );
 
@@ -728,6 +735,106 @@ async function main() {
     "the Select tool lasso paints no shape",
     after.sum === before.sum && after.painted === before.painted,
     JSON.stringify({ before, after }),
+  );
+
+  // =========================================================================
+  // TEST 9 — the room: bar under Clear, chat, invite and reactions
+  // =========================================================================
+  const roomLayout = await evaluate(`(() => {
+    const bar = document.querySelector('[data-testid="room-bar"]');
+    const clear = document.querySelector('[data-testid="tool-clear"]');
+    if (!bar || !clear) return null;
+    const b = bar.getBoundingClientRect();
+    const c = clear.getBoundingClientRect();
+    return { barTop: b.top, barBottom: b.bottom, clearBottom: c.bottom, left: b.left };
+  })()`);
+  check(
+    "the room bar sits under the Clear button",
+    roomLayout !== null &&
+      roomLayout.barTop >= roomLayout.clearBottom - 1 &&
+      roomLayout.left < 140,
+    JSON.stringify(roomLayout),
+  );
+
+  const roomControls = await evaluate(`(() => ({
+    invite: !!document.querySelector('[data-testid="room-invite"]'),
+    chat: !!document.querySelector('[data-testid="room-chat"]'),
+    emoji: !!document.querySelector('[data-testid="room-emoji"]'),
+    mic: !!document.querySelector('[data-testid="room-mic"]'),
+    meter: !!document.querySelector('[data-testid="room-mic-meter"]'),
+    bar: !!document.querySelector('[data-testid="room-chat-bar"]'),
+    input: !!document.querySelector('[data-testid="room-chat-input"]'),
+  }))()`);
+  check(
+    "the room controls are all on the board",
+    Object.values(roomControls).every(Boolean),
+    JSON.stringify(roomControls),
+  );
+
+  // The invite popover hands out the address of this very board.
+  await evaluate(`document.querySelector('[data-testid="room-invite"]').click(); 'clicked'`);
+  await sleep(400);
+  const inviteLink = await evaluate(
+    `document.querySelector('[data-testid="room-invite-link"]')?.value ?? ''`,
+  );
+  check(
+    "the invite popover offers the board's own address",
+    inviteLink.includes("/board/") && inviteLink.includes(BOARD.split("/board/")[1] ?? ""),
+    inviteLink,
+  );
+  await evaluate(`document.querySelector('[data-testid="room-invite"]').click(); 'closed'`);
+  await sleep(300);
+
+  // Say something.
+  await evaluate(`(() => {
+    const input = document.querySelector('[data-testid="room-chat-input"]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, 'hola room');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return 'typed';
+  })()`);
+  await sleep(250);
+  await evaluate(`document.querySelector('[data-testid="room-chat-send"]').click(); 'sent'`);
+  await sleep(500);
+
+  const said = await evaluate(`(() => {
+    const node = document.querySelector('[data-testid="room-message-text"]');
+    return {
+      text: node?.textContent ?? '',
+      bubbles: document.querySelectorAll('[data-testid="room-message"]').length,
+    };
+  })()`);
+  check(
+    "a message shows up in the room",
+    said.text === "hola room" && said.bubbles === 1,
+    JSON.stringify(said),
+  );
+
+  const stored = await evaluate(
+    `Object.keys(localStorage).filter(k => k.startsWith('wf_room_')).length`,
+  );
+  check("the room is kept per board", stored === 1, `rooms=${stored}`);
+
+  // A reaction floats over the board.
+  await evaluate(`document.querySelector('[data-testid="room-emoji"]').click(); 'clicked'`);
+  await sleep(400);
+  await evaluate(`document.querySelector('[data-testid="room-emoji-option"]').click(); 'sent'`);
+  await sleep(500);
+  const reactions = await evaluate(
+    `document.querySelectorAll('[data-testid="room-reaction"]').length`,
+  );
+  check("a reaction floats over the board", reactions === 1, `reactions=${reactions}`);
+
+  // The room survives a reload.
+  await goto(BOARD);
+  const survived = await evaluate(`(() => ({
+    messages: document.querySelectorAll('[data-testid="room-message"]').length,
+    text: document.querySelector('[data-testid="room-message-text"]')?.textContent ?? '',
+  }))()`);
+  check(
+    "the room is still there after a reload",
+    survived.messages === 1 && survived.text === "hola room",
+    JSON.stringify(survived),
   );
 
   // =========================================================================

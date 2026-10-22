@@ -13,6 +13,7 @@ This build deliberately departs from the source in these ways:
 5. **Every generated board lives on `whiteboardmod.com`.** Share links read `https://whiteboardmod.com/board/<id>`, and the footer's privacy/terms links stay local (`/privacy`, `/terms`) instead of pointing back at the source site.
 6. **Pro is free.** `/pro` activates it in one click, no plans, no gateway. The header no longer links to it.
 7. **No Top Posts / Following tabs and no Sign In.**
+8. **The board is also a room.** Whiteboard Mod is a mix of whiteboardfox (the drawing) and here.fm (the room): under the board's **Clear** button sits a room bar with **Invite**, **Chat**, a reaction picker and the **microphone**, and a here.fm-style bar runs along the bottom of the board with your avatar, an `@`, an emoji button and a "Say something..." field. See *The room* below.
 
 ### Brand palette
 
@@ -89,7 +90,44 @@ Behaviour:
 
 Presence is honest: because there is no collaboration backend, the panel lists exactly one participant — the visitor themself. The row shows the nickname in large type (`1.15em`) with the device id directly beneath it in small monospace (`0.68em`), which makes it explicit that a participant *is* a browser rather than an account. Remote participants slot into the same `participants` array when a transport is added; nothing in the panel has to change.
 
+### The room (here.fm's half)
 
+Whiteboard Mod is a mix of whiteboardfox and [here.fm](https://here.fm): the canvas is whiteboardfox's, the room around it is here.fm's. The reference room was inspected at `https://again.here.fm/1875608d-1773-4407-af88-db7dd3f7c33f` — the room itself is gone, but its DOM and stylesheet still describe the layout that was copied.
+
+**Directly under the Clear button** sits the room bar, a coral block at the bottom of the 140px tool column:
+
+| Control | What it does |
+| --- | --- |
+| **Invite** | Opens a popover with the board's own address (`https://whiteboardmod.com/board/<id>`) and a **Copy link** button. |
+| **Chat** | Shows or hides the conversation; it carries a badge with the number of messages that arrived while it was closed. |
+| **Reaction** | Opens the emoji palette; picking one floats that emoji up over the board. |
+| **Mic** | Turns the local microphone on and off, with a live input-level meter underneath. |
+
+**Along the bottom of the board** runs the chat bar, the same shape as here.fm's: the visitor's avatar, their nickname, the microphone's state, an `@` that drops a mention into the field, an emoji button that opens the same palette, the **"Say something..."** input and a **Send** button. The bar is part of the board's layout rather than an overlay, so it never covers a drawing — the canvas is 52px shorter than the viewport.
+
+**The conversation** floats over the canvas on the right, like here.fm's `#room-messages` column: white bubbles with a 10px radius and a soft shadow, the author in coral above the message.
+
+**Reactions** float up from the bottom of the board and fade out after 4.5 seconds.
+
+Layout facts taken from the reference room's own stylesheet, then restyled in coral: here.fm's bubbles are `background: #fff`, `border-radius: 10px`, `box-shadow: 0 0 13px rgba(0,0,0,.5)`; its message column is `width: fit-content`; its invite title is bold 14px. here.fm's own primary (`#6b1be3`) is **not** used — the accent stays Whiteboard Mod's coral.
+
+#### How the room is stored
+
+| Module | Responsibility |
+| --- | --- |
+| `src/lib/board/room.ts` | The room model: `RoomMessage`, `RoomReaction`, the storage key, parsing, merging and committing. |
+| `use-room.ts` | The hook: reads the room through `useSyncExternalStore`, mirrors it to the other tabs, and sends messages and reactions. |
+| `use-room-mic.ts` | The microphone: `getUserMedia` → `AnalyserNode` → an RMS level from 0 to 1. |
+| `room-bar.tsx` | The room bar under Clear, with the invite popover. |
+| `room-chat.tsx` | The chat bar, the message bubbles and the reaction layer. |
+| `room-emoji-picker.tsx` | The palette both places share. |
+
+The room lives in `localStorage` under `wf_room_<boardId>` and is mirrored to the other tabs of the same browser through the `storage` event, which is as far as a server-less build can reach. The model is an append-only list of messages (the last 200 are kept) plus a list of reactions that expire after 45 seconds. Writes merge with the stored room first, so two tabs talking at once cannot drop each other's messages.
+
+Two details worth naming:
+
+- **The room is read through `useSyncExternalStore`, not `useState`.** The browser's storage is the source of truth and the store in front of it is only a cache; the repo's ESLint (`react-hooks/set-state-in-effect`) also rejects a `setState` inside an effect body, which is what a `useState` version would have needed.
+- **The unread badge is derived, not stored.** It counts the messages newer than the moment the conversation was last opened, so it cannot drift out of step with the list it describes.
 
 ### What Pro unlocks
 
@@ -135,7 +173,7 @@ The homepage in full, including every interaction that is actually reachable wit
 - **Options overlay** — opened by `Start Drawing`. Reproduces the three "Other participants can…" radios, the Invite checkbox and target select (including the copy-limited note), the `More Options` / `Create Whiteboard` actions, and the creating-spinner state. The fun/work question was removed.
 - **Gallery** — 12 real snapshots per page in the source's 3-column card grid, editor's-choice badges, the per-card overflow menu with cross-closing and outside-click behaviour, the like toggle, the `of 160` pagination controls with a working `Previous` / `Next` and the top loading bar. Cards link to the local board instead of the live site.
 - **Lobby** — device id, nickname capture, and a recent-boards list.
-- **Board** — an identical copy of the source board screen (menu strip, canvas, users panel, snackbar) with a `whiteboardmod.com` share link, and a Draw options panel that replaces the source's 7 colours with an artist's colour wheel, its 4 widths with a slider + editable number, and adds fill, gradient fill and a full gradient settings section (Lineal / Radial, a live preview, and a swatch + position slider + `+` row per colour stop).
+- **Board** — an identical copy of the source board screen (menu strip, canvas, users panel, snackbar) with a `whiteboardmod.com` share link, a Draw options panel that replaces the source's 7 colours with an artist's colour wheel, its 4 widths with a slider + editable number, and fill, gradient fill and a full gradient settings section (Lineal / Radial, a live preview, and a swatch + position slider + `+` row per colour stop) — plus the room layer: a room bar under Clear (invite, chat, reaction, mic) and a here.fm-style chat bar along the bottom.
 - **Profile overlay and `/account`** — device id (read-only) plus an editable nickname.
 - **Features strip** and **Questions or Comments?** contact section, with the original icons and `speech-bubbles.png` background.
 
@@ -145,9 +183,11 @@ Assets (`go.png`, `close-button.png`, the three 152×152 feature icons, `speech-
 
 Measured against the live page at a 1000px viewport: `h1`, subtitle, CTA, ID row, tab strip, gallery container, card box, card thumbnail and pagination all match the source's dimensions and positions exactly. Details and the full measurement table are in `docs/research/whiteboardfox/page-brief.md`.
 
-The board screen was measured the same way, against the live reference `https://r9.whiteboardfox.com/96635256-2598-4487` at a 1000×700 viewport: `#menuStrip` `0,0 140×700` on `#EEEEEE`, `#canvasId` `140,0 860×700`, seven 140×70 buttons with 13px labels, and the seven palette fills copied value-for-value (the palette itself was later replaced by the colour wheel). See `docs/research/whiteboardfox/board.source.html` and `board.css`.
+The board screen was measured the same way, against the live reference `https://r9.whiteboardfox.com/96635256-2598-4487` at a 1000×700 viewport: `#menuStrip` `0,0 140×700` on `#EEEEEE`, `#canvasId` `140,0 860×700`, seven 140×70 buttons with 13px labels, and the seven palette fills copied value-for-value (the palette itself was later replaced by the colour wheel). The clone's canvas is now 860×648, because the room's chat bar takes the bottom 52px rather than floating over the drawing. See `docs/research/whiteboardfox/board.source.html` and `board.css`.
 
 One deliberate reproduction: the source is **not responsive** — its content column stays 1010px at every width, so a phone scrolls horizontally. The clone keeps that behaviour rather than inventing a mobile layout. See `docs/design-references/local-home-mobile-390.png`.
+
+The room half was measured the same way, against here.fm's own DOM and stylesheet: the bottom bar's shape (avatar · `@` · emoji · "Say something..."), the floating message column on the right, the white 10px-radius bubbles and the invite popover. The colours were re-pointed at coral — here.fm's purple `#6b1be3` is reference only.
 
 ## Not reproduced (and why)
 
@@ -157,6 +197,7 @@ One deliberate reproduction: the source is **not responsive** — its content co
 - Like counts and card descriptions render empty — the same as the source, whose own code paths for both are behind `if (false)` guards.
 - **Authentication is replaced, not reproduced.** The source's `login.jsp` / Firebase sign-in flow is gone; identity is a `localStorage` device profile, and the Lobby is the only entry point.
 - **The board is local, not realtime.** There is no collaboration server, so the participants panel lists only the visitor. Strokes live in a ref in the `use-board-doc` document rather than being relayed to a server. The source's `diagramName` handoff is no longer used. The screen, the drawing model and the tools are faithful — only the transport is missing.
+- **The room is browser-local.** here.fm talks over a websocket; this build has no server, so a board's conversation and reactions live in `localStorage` and reach the other tabs of the *same* browser through the `storage` event. Two people on two machines do not share a room yet, and the microphone is a local level meter rather than a voice stream. The model (append-only messages, expiring reactions, per-board keys) is already the shape a transport would need.
 - **`Who drew what?` is not implemented.** It needs the server-side per-stroke author records that do not exist without a backend; the button reproduces the original's appearance and state.
 - **The fun/work branch is gone.** `wf_user_type` and `use-user-type.ts` were deleted, so the Options overlay has a single path.
 - **Pro has no server side.** The flag lives in `localStorage`, so "activation" is per-device and does not sync anywhere.
@@ -167,13 +208,15 @@ One deliberate reproduction: the source is **not responsive** — its content co
 src/app/                                  routes (/, /lobby, /board/[id], /pro, /account,
                                           /options, /privacy, /terms)
 src/app/whiteboardfox.css                 body typography (coral), wf-spin / wf-progress keyframes
-src/app/whiteboard-mod-board.css          board chrome copied from the source Whiteboard.css
+src/app/whiteboard-mod-board.css          board chrome copied from the source Whiteboard.css,
+                                          plus the room layer (.room* rules)
 src/app/globals.css                       coral brand tokens + --primary
 src/lib/board/stroke.ts                   stroke model + pure geometry (hit test, lasso, transforms)
 src/lib/board/camera.ts                   infinite pan/zoom (zoomAt, panBy, screenToWorld)
 src/lib/board/grid.ts                     adaptive infinite grid step
 src/lib/board/color.ts                    HSV/RGB/hex maths (withAlpha, rotateHue, luminance)
 src/lib/board/render.ts                   single-frame painter (grid, strokes, lasso, handles, fills)
+src/lib/board/room.ts                     the room model: messages, reactions, localStorage
 src/components/sites/whiteboardfox/       hero, options panel, gallery, dropdown, features,
                                           contact, header, footer, shell, data
   use-device-user.ts                      device id (UUID-derived) + nickname store, hasProfile()
@@ -188,6 +231,11 @@ src/components/sites/whiteboardfox/       hero, options panel, gallery, dropdown
   board-users-panel.tsx                   #usersTable rows (nickname large, device id small)
   board-icons.tsx                         pencil SVG, toolbar PNGs, Avatar
   use-pro.ts                              free Pro flag store (localStorage)
+  room-bar.tsx                            room bar under Clear (invite, chat, reaction, mic)
+  room-chat.tsx                           chat bar, message bubbles, floating reactions
+  room-emoji-picker.tsx                   the emoji palette the room bar and chat bar share
+  use-room.ts                             the room hook (useSyncExternalStore + storage event)
+  use-room-mic.ts                         microphone state and input level
   profile-panel.tsx, account-section.tsx  profile UI (nickname is the only editable field)
   user-chip.tsx, pro-section.tsx          header chip + /pro activation UI
 src/types/whiteboardfox.ts                GalleryPost / GalleryPage
@@ -198,17 +246,17 @@ docs/research/whiteboardfox/              page-brief.md, source.html, style.css,
                                           gallery-posts.json
 docs/design-references/                   source + local screenshots, comparison.png,
                                           board-draw-tools.png (marker + gradient fill)
-scripts/board-canvas-check.mjs            headless-Chrome canvas regression (30 checks)
+scripts/board-canvas-check.mjs            headless-Chrome canvas regression (37 checks)
 ```
 
 ## Checks run
 
 - `npm run check` — ESLint clean (0 errors, 0 warnings), `tsc --noEmit` clean, `next build` prerenders 8 static routes (`/`, `/pro`, `/account`, `/lobby`, `/options`, `/privacy`, `/terms`, `/_not-found`) plus the dynamic `/board/[id]`.
-- A headless-Chrome-over-CDP regression exercises the canvas end to end — buffer sizing, marker colour/width commits, the live preview, `Rellenar`, and the gradient settings (type radios, preview, stop rows, add/remove, position slider) with two-, three-stop, radial and repositioned ramps — asserting the resulting pixels, plus the Select tool dragging a selected shape and never painting. 30/30 green. Run it with `npm run dev` in one shell and `node scripts/board-canvas-check.mjs` in another.
+- A headless-Chrome-over-CDP regression exercises the canvas end to end — buffer sizing, marker colour/width commits, the live preview, `Rellenar`, and the gradient settings (type radios, preview, stop rows, add/remove, position slider) with two-, three-stop, radial and repositioned ramps — asserting the resulting pixels, plus the Select tool dragging a selected shape and never painting. 37/37 green, including the room checks (the bar sits under Clear, every room control is on the board, the invite popover offers the board's own address, a message shows up and is stored under one key per board, a reaction floats, and the room survives a reload). Run it with `npm run dev` in one shell and `node scripts/board-canvas-check.mjs` in another.
 - Layout compared numerically against the live page via the browser's computed styles.
 - Pixel diff of the source and clone at 1000×700 — residual differences are the empty ad column, the ad-driven vertical offset, font rasterisation, and thumbnail content.
 - Every interaction above was exercised in a real browser and its resulting DOM state asserted.
-- Board screen measured against `https://r9.whiteboardfox.com/96635256-2598-4487` and asserted locally: `#menuStrip` 140×700 `rgb(238,238,238)` in column flow, `#canvasId` 860×700 at x=140, seven 140×70 buttons at y=0…420 with 13px labels and the active-tool inset border, the source's palette cells at 70×70 with all seven fills equal to the live DOM (the clone replaces that palette with the colour wheel), and a `.liveUsersPanel` whose rows are 60px with dots `rgb(0,192,4)`/`rgb(131,94,255)`.
+- Board screen measured against `https://r9.whiteboardfox.com/96635256-2598-4487` and asserted locally: `#menuStrip` 140×700 `rgb(238,238,238)` in column flow, `#canvasId` 860×648 at x=140 (648 = 700 − the 52px chat bar), seven 140×70 buttons at y=0…420 with 13px labels and the active-tool inset border, the source's palette cells at 70×70 with all seven fills equal to the live DOM (the clone replaces that palette with the colour wheel), and a `.liveUsersPanel` whose rows are 60px with dots `rgb(0,192,4)`/`rgb(131,94,255)`.
 - Creating a board from the Lobby rewrites `/board/new` to `/board/<minted id>`, and the share link reads `https://whiteboardmod.com/board/<id>`. A pointer drag paints, Undo clears it, and no page in the app links to `whiteboardfox.com`.
 
 ### Canvas engine assertions (numerical, in-browser)
@@ -239,8 +287,14 @@ Each of these was measured from the canvas pixel buffer rather than eyeballed:
 | Select tool never paints | With *Relleno degradado* still active in the Draw panel and the Select tool picked, a lasso over an empty area left the region's pixel checksum untouched (`sum=2509251976`, `painted=948` before and after) — no shape was created. |
 | Lobby gate | With `wf_nickname` cleared, `/board/GATE-TEST-0001` renders the gate instead of the canvas and then redirects to `/lobby?from=board`, minting a fresh `WM-xxxx-xxxx` id. |
 | Participants row | Exactly 1 row: `Zorro (You)` at `23px` with `WM-A3F9-2C71` at `13.6px` directly beneath. |
+| Room bar under Clear | The room block starts at `y=490`, exactly where the Clear button ends (`y=420…490`), and is 140px wide — the tool column's own width. |
+| Room controls | Four coral round buttons (30×30, `rgb(224,83,63)`, `border-radius: 50%`) in one row at `x=4/38/72/106`, with a 132×6 level meter under them. |
+| Invite popover | Opens below the button and reads `https://whiteboardmod.com/board/PREVIEW-TEST-01` — the board's own address, not a placeholder. |
+| Chat bar | 860×52 at `x=140`, pinned to the bottom of the board; the canvas is 52px shorter than the viewport, so the bar never covers a drawing. |
+| A message | Sending `hola room` renders one bubble with that text and stores the room under exactly one key (`wf_room_<boardId>`); it is still there after a reload. |
+| A reaction | Picking an emoji puts one floating element over the canvas. |
 
 > Note for anyone re-running these: the browser harness keeps tabs `hidden`, and a hidden tab never fires `requestAnimationFrame`. The canvas repaints from rAF for continuous gestures (pan, in-progress lasso, live transforms), so those are only observable in a visible tab. Everything that repaints through a React state change — stroke commits, tool switches, zoom label, selection commits — is measurable regardless, which is how the table above was produced.
 >
-> The canvas assertions above were re-run against a headless Chrome driven over CDP, with `requestAnimationFrame` polyfilled to `setTimeout` via `Page.addScriptToEvaluateOnNewDocument` (headless Chrome does not drive rAF either). Pointer input goes through `Input.dispatchMouseEvent`, so the board sees trusted events and `setPointerCapture` works. The full regression is 30/30 green.
+> The canvas assertions above were re-run against a headless Chrome driven over CDP, with `requestAnimationFrame` polyfilled to `setTimeout` via `Page.addScriptToEvaluateOnNewDocument` (headless Chrome does not drive rAF either). Pointer input goes through `Input.dispatchMouseEvent`, so the board sees trusted events and `setPointerCapture` works. The full regression is 37/37 green.
 

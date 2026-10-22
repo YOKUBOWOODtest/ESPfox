@@ -12,11 +12,15 @@ import {
 } from "./board-icons";
 import { DrawPanel } from "./draw-panel";
 import { OptionsMenu } from "./options-menu";
+import { RoomBar } from "./room-bar";
+import { RoomChatBar, RoomMessages, RoomReactions } from "./room-chat";
 import { markJoined, useBoard } from "./use-board";
 import { useBoardDoc } from "./use-board-doc";
-import { useDeviceUser } from "./use-device-user";
+import { useDeviceUser, displayName } from "./use-device-user";
 import { useLobbyGate } from "./use-lobby-gate";
 import { usePro } from "./use-pro";
+import { useRoom } from "./use-room";
+import { useRoomMic } from "./use-room-mic";
 import { WHITEBOARDMOD_ORIGIN } from "./site-header";
 import {
   clampScale,
@@ -118,6 +122,21 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const effectiveId = resolveBoardId(boardId);
   const board = useBoard(effectiveId, user, pro);
   const doc = useBoardDoc();
+  /**
+   * Whether the room's conversation is on screen.
+   *
+   * The bar itself is always there — it is part of the board's layout — but the
+   * messages float over the canvas, so they can be put away.
+   */
+  const [chatOpen, setChatOpen] = useState(true);
+  /**
+   * The room around the board: chat, reactions and the microphone.
+   *
+   * here.fm's half of the mix. The room is per board and lives in this
+   * browser, so it is shared with the other tabs of the same board.
+   */
+  const room = useRoom(effectiveId, displayName(user), user.id, chatOpen);
+  const mic = useRoomMic();
 
   const [tool, setTool] = useState<Tool>("draw");
   const [style, setStyle] = useState<StrokeStyle>(DEFAULT_STYLE);
@@ -879,27 +898,49 @@ export function BoardSection({ boardId }: { boardId: string }) {
             Clear
           </span>
         </button>
+
+        {/* --- The room: here.fm's half of the mix, under the board's tools --- */}
+        <RoomBar
+          roomUrl={`${WHITEBOARDMOD_ORIGIN}/board/${effectiveId}`}
+          room={room}
+          mic={mic}
+          chatOpen={chatOpen}
+          onToggleChat={() => setChatOpen((open) => !open)}
+        />
       </div>
 
       {/* --- Canvas ------------------------------------------------------- */}
-      <canvas
-        ref={attachCanvas}
-        id="canvasId"
-        className={cursorClass}
-        onPointerDown={begin}
-        onPointerMove={extend}
-        onPointerUp={finish}
-        onPointerCancel={finish}
-        onWheel={handleWheel}
-        onDoubleClick={(event) => {
-          // On the canvas, a double click acts as a shortcut for the pencil.
-          if (tool === "draw") {
-            setDrawPanelOpen(true);
-            event.preventDefault();
-          }
-        }}
-        data-testid="boardCanvas"
-      />
+      <div className="wm-stage">
+        <canvas
+          ref={attachCanvas}
+          id="canvasId"
+          className={cursorClass}
+          onPointerDown={begin}
+          onPointerMove={extend}
+          onPointerUp={finish}
+          onPointerCancel={finish}
+          onWheel={handleWheel}
+          onDoubleClick={(event) => {
+            // On the canvas, a double click acts as a shortcut for the pencil.
+            if (tool === "draw") {
+              setDrawPanelOpen(true);
+              event.preventDefault();
+            }
+          }}
+          data-testid="boardCanvas"
+        />
+
+        {chatOpen && <RoomMessages messages={room.messages} />}
+
+        <RoomReactions reactions={room.reactions} />
+
+        <RoomChatBar
+          room={room}
+          author={displayName(user)}
+          hue={board.participants[0]?.avatarHue ?? 0}
+          mic={mic}
+        />
+      </div>
 
       {drawPanelOpen && (
         <DrawPanel

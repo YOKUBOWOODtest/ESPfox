@@ -70,6 +70,11 @@ function hash(value: string): number {
   return out;
 }
 
+/** Hue of the avatar a device is given, so it looks the same everywhere. */
+export function avatarHue(deviceId: string): number {
+  return hash(deviceId) % 360;
+}
+
 /** Caches per-board snapshots so `useSyncExternalStore` sees stable objects. */
 const snapshotCache = new Map<string, BoardState>();
 const cacheSignatures = new Map<string, string>();
@@ -89,7 +94,7 @@ function boardSnapshot(boardId: string, user: DeviceUser, pro: boolean): BoardSt
     status: pro ? "pro" : "online",
     self: true,
     // Hue follows the device id, so a visitor keeps the same avatar everywhere.
-    avatarHue: hash(selfKey) % 360,
+    avatarHue: avatarHue(selfKey),
     canBlock: false,
   };
   const state: BoardState = {
