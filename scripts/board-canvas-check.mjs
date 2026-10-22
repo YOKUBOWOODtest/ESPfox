@@ -313,6 +313,36 @@ async function main() {
       return hits;
     })()`);
 
+  /**
+   * The bounding box of the green fill inside a region, in canvas pixels.
+   *
+   * The fill is `rgb(0,255,0)`, which nothing else on the board shares: the
+   * selection chrome is the brand coral (a green of 83) and the grid is a pale
+   * grey, so a strict green match isolates the ink.
+   */
+  const greenBounds = (x0, y0, x1, y1) =>
+    evaluate(`(() => {
+      const c = document.querySelector('[data-testid="boardCanvas"]');
+      const ctx = c.getContext('2d');
+      const w = ${x1 - x0}, h = ${y1 - y0};
+      const d = ctx.getImageData(${x0}, ${y0}, w, h).data;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, hits = 0;
+      for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          const i = (y * w + x) * 4;
+          if (d[i + 3] > 0 && d[i + 1] > 150 && d[i] < 120 && d[i + 2] < 120) {
+            hits += 1;
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      if (!hits) return null;
+      return { minX: minX + ${x0}, minY: minY + ${y0}, maxX: maxX + ${x0}, maxY: maxY + ${y0}, hits };
+    })()`);
+
   const canvasX = (clientX) => clientX - geo.left;
   const canvasY = (clientY) => clientY - geo.top;
 
@@ -738,7 +768,163 @@ async function main() {
   );
 
   // =========================================================================
-  // TEST 9 — the room: bar under Clear, chat, invite and reactions
+  // TEST 9 — the Select tool scales from the opposite edge, and undo undoes it
+  // =========================================================================
+  // A solid green rectangle. A fill is easy to measure — its ink is exactly
+  // the polygon — and a thin brush keeps the selection box tight around it.
+  await evaluate(`document.querySelector('[data-testid="tool-draw"]').click(); 'draw'`);
+  await sleep(300);
+  await openPanel();
+  await pickStyle("Rellenar");
+  await pickSize("1");
+  await setHex(0, "00FF00");
+  const rectStyle = await readStyle();
+  await closePanel();
+
+  const RECT = { x: 120, y: 700, w: 100, h: 100 };
+  /** The half of the brush width the selection box pads the ink with. */
+  const half = Number(rectStyle.width) / 2;
+  /** Canvas coordinates to page coordinates. */
+  const pageX = (v) => v + geo.left;
+  const pageY = (v) => v + geo.top;
+  /** The region the rectangle and its scaled versions live in. */
+  const region = [60, 590, 300, 880];
+
+  await mouse("mousePressed", pageX(RECT.x), pageY(RECT.y), 1);
+  for (const [dx, dy] of [
+    [RECT.w, 0],
+    [RECT.w, RECT.h],
+    [0, RECT.h],
+  ]) {
+    await mouse("mouseMoved", pageX(RECT.x + dx), pageY(RECT.y + dy), 1);
+    await sleep(40);
+  }
+  await sleep(200);
+  await mouse("mouseReleased", pageX(RECT.x), pageY(RECT.y + RECT.h), 0);
+  await sleep(500);
+
+  const drawn = await greenBounds(...region);
+  check(
+    "the rectangle is drawn where it was asked for",
+    drawn !== null &&
+      Math.abs(drawn.minX - RECT.x) <= 5 &&
+      Math.abs(drawn.minY - RECT.y) <= 5 &&
+      Math.abs(drawn.maxX - (RECT.x + RECT.w)) <= 5 &&
+      Math.abs(drawn.maxY - (RECT.y + RECT.h)) <= 5,
+    JSON.stringify(drawn),
+  );
+
+  // Lasso it with the Select tool.
+  await evaluate(`document.querySelector('[data-testid="tool-select"]').click(); 'select'`);
+  await sleep(400);
+  await mouse("mousePressed", pageX(RECT.x - 20), pageY(RECT.y - 20), 1);
+  for (const [dx, dy] of [
+    [RECT.w + 40, 0],
+    [RECT.w + 40, RECT.h + 40],
+    [0, RECT.h + 40],
+  ]) {
+    await mouse(
+      "mouseMoved",
+      pageX(RECT.x - 20 + dx),
+      pageY(RECT.y - 20 + dy),
+      1,
+    );
+    await sleep(40);
+  }
+  await sleep(200);
+  await mouse("mouseReleased", pageX(RECT.x - 20), pageY(RECT.y + RECT.h + 20), 0);
+  await sleep(500);
+
+  const rectSelection = await countSelection(
+    canvasX(pageX(RECT.x - 40)),
+    canvasY(pageY(RECT.y - 60)),
+    canvasX(pageX(RECT.x + RECT.w + 40)),
+    canvasY(pageY(RECT.y + RECT.h + 20)),
+  );
+  check("the rectangle is selected", rectSelection > 0, `coral=${rectSelection}`);
+
+  // Drag the top handle 100px up. The bottom edge has to stay put, the top
+  // has to follow the pointer, and the shape must not turn inside out.
+  const handleX = RECT.x + RECT.w / 2;
+  const handleY = RECT.y - half;
+  await mouse("mousePressed", pageX(handleX), pageY(handleY), 1);
+  for (let step = 1; step <= 10; step += 1) {
+    await mouse("mouseMoved", pageX(handleX), pageY(handleY - step * 10), 1);
+    await sleep(30);
+  }
+  await sleep(200);
+  await mouse("mouseReleased", pageX(handleX), pageY(handleY - 100), 0);
+  await sleep(500);
+
+  const scaled = await greenBounds(...region);
+  console.log("scaled bounds:", JSON.stringify(scaled));
+  check(
+    "dragging the top handle up stretches the shape without flipping it",
+    scaled !== null &&
+      scaled.minY >= RECT.y - 105 &&
+      scaled.minY <= RECT.y - 94 &&
+      scaled.maxY >= RECT.y + RECT.h - 6 &&
+      scaled.maxY <= RECT.y + RECT.h + 6 &&
+      scaled.maxX - scaled.minX >= RECT.w - 8 &&
+      scaled.maxX - scaled.minX <= RECT.w + 8,
+    JSON.stringify(scaled),
+  );
+  check(
+    "the bottom edge of the shape stayed where it was",
+    scaled !== null && Math.abs(scaled.maxY - (RECT.y + RECT.h)) <= 6,
+    JSON.stringify(scaled),
+  );
+
+  // Undo has to take the scale back.
+  await evaluate(`document.querySelector('[data-testid="tool-undo"]').click(); 'undo'`);
+  await sleep(500);
+  const unscaled = await greenBounds(...region);
+  check(
+    "undo takes the scale back",
+    unscaled !== null &&
+      Math.abs(unscaled.minY - RECT.y) <= 5 &&
+      Math.abs(unscaled.maxY - (RECT.y + RECT.h)) <= 5 &&
+      Math.abs(unscaled.minX - RECT.x) <= 5 &&
+      Math.abs(unscaled.maxX - (RECT.x + RECT.w)) <= 5,
+    JSON.stringify(unscaled),
+  );
+
+  // Move the selection, then undo the move as well.
+  await mouse("mousePressed", pageX(handleX), pageY(RECT.y + RECT.h / 2), 1);
+  for (let step = 1; step <= 6; step += 1) {
+    await mouse(
+      "mouseMoved",
+      pageX(handleX + step * 10),
+      pageY(RECT.y + RECT.h / 2),
+      1,
+    );
+    await sleep(30);
+  }
+  await sleep(200);
+  await mouse("mouseReleased", pageX(handleX + 60), pageY(RECT.y + RECT.h / 2), 0);
+  await sleep(500);
+
+  const moved = await greenBounds(...region);
+  check(
+    "the Select tool drags the shape",
+    moved !== null && Math.abs(moved.minX - (RECT.x + 60)) <= 8,
+    JSON.stringify(moved),
+  );
+
+  await evaluate(`document.querySelector('[data-testid="tool-undo"]').click(); 'undo'`);
+  await sleep(500);
+  const movedBack = await greenBounds(...region);
+  check(
+    "undo takes the move back",
+    movedBack !== null &&
+      Math.abs(movedBack.minX - RECT.x) <= 5 &&
+      Math.abs(movedBack.maxX - (RECT.x + RECT.w)) <= 5 &&
+      Math.abs(movedBack.minY - RECT.y) <= 5,
+    JSON.stringify(movedBack),
+  );
+
+  // =========================================================================
+  // TEST 10 — the room: bar under Clear, chat, invite and reactions
   // =========================================================================
   const roomLayout = await evaluate(`(() => {
     const bar = document.querySelector('[data-testid="room-bar"]');

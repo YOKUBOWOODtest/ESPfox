@@ -41,9 +41,12 @@ import {
 } from "@/lib/board/render";
 import {
   applyTransform,
+  handleAnchor,
   hitStroke,
   pointInPolygon,
+  type Bounds,
   type Point,
+  type SelectionHandle,
   type StrokeStyle,
   type DrawStyle,
 } from "@/lib/board/stroke";
@@ -65,8 +68,13 @@ import {
 
 type Tool = "draw" | "erase" | "move" | "select";
 
-/** Corner and edge handles, in the order `selectionHandlePositions` returns them. */
-type HandleId = "nw" | "ne" | "se" | "sw" | "n" | "e" | "s" | "w" | "rotate";
+/**
+ * Corner and edge handles, in the order `selectionHandlePositions` returns them.
+ *
+ * The type lives in the stroke library because the scale geometry needs it
+ * too: the pivot of a scale is the opposite edge or corner.
+ */
+type HandleId = SelectionHandle;
 
 /** Board ids look like the source's: three uppercase hex-ish blocks. */
 function mintBoardId(): string {
@@ -184,11 +192,21 @@ export function BoardSection({ boardId }: { boardId: string }) {
     | { kind: "move"; lastWorld: { x: number; y: number } }
     | {
         kind: "transform";
-        handle: HandleId;
+        handle: SelectionHandle;
         startWorld: { x: number; y: number };
+        /**
+         * The selection's bounds when the drag began.
+         *
+         * The scale is measured against these, not against the live bounds:
+         * the selection grows as it is dragged, so a live denominator would
+         * make the shape chase its own tail.
+         */
+        startBounds: Bounds;
         pivot: { x: number; y: number };
         lastAngle: number;
-        lastScale: number;
+        /** The factor applied to each axis so far, so the next move is a ratio. */
+        lastScaleX: number;
+        lastScaleY: number;
       }
     | null
   >(null);
@@ -434,13 +452,16 @@ export function BoardSection({ boardId }: { boardId: string }) {
             x: (bounds.minX + bounds.maxX) / 2,
             y: (bounds.minY + bounds.maxY) / 2,
           };
+          doc.beginEdit();
           gesture.current = {
             kind: "transform",
             handle,
             startWorld: world,
+            startBounds: bounds,
             pivot,
             lastAngle: Math.atan2(world.y - pivot.y, world.x - pivot.x),
-            lastScale: 1,
+            lastScaleX: 1,
+            lastScaleY: 1,
           };
           return;
         }
@@ -448,6 +469,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
       // A press on the selection drags it around.
       if (hitsSelection(world.x, world.y)) {
+        doc.beginEdit();
         gesture.current = { kind: "move", lastWorld: world };
         return;
       }
@@ -467,6 +489,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
         y: screen.y,
         radius: ERASE_BRUSH_RADIUS * camera.current.scale,
       };
+      // The whole drag is one undo step.
+      doc.beginEdit();
       const removed = doc.eraseAt(world.x, world.y, ERASE_TOLERANCE);
       if (removed > 0) {
         schedulePaint();
@@ -581,65 +605,45 @@ export function BoardSection({ boardId }: { boardId: string }) {
     }
 
     if (active.kind === "transform") {
-      const bounds = selectionBounds(
-        doc.strokes.current.filter((stroke) => doc.selectedIds.current.has(stroke.id)),
-      );
-      if (!bounds) {
-        return;
-      }
-      const { pivot, handle } = active;
-
-      if (handle === "rotate") {
-        const angle = Math.atan2(world.y - pivot.y, world.x - pivot.x);
+      if (active.handle === "rotate") {
+        const angle = Math.atan2(world.y - active.pivot.y, world.x - active.pivot.x);
         const delta = angle - active.lastAngle;
         active.lastAngle = angle;
-        doc.rotateSelection(delta, pivot.x, pivot.y, true);
+        doc.rotateSelection(delta, active.pivot.x, active.pivot.y, true);
         schedulePaint();
         return;
       }
 
-      // Scale factor relative to the opposite edge/corner, normalised by the
-      // starting extent so the drag feels linear rather than compounding.
-      const halfWidth = Math.max(1, (bounds.maxX - bounds.minX) / 2);
-      const halfHeight = Math.max(1, (bounds.maxY - bounds.minY) / 2);
-      const offsetX = world.x - pivot.x;
-      const offsetY = world.y - pivot.y;
+      /**
+       * Scaling from a handle.
+       *
+       * The pivot is the *opposite* edge or corner, so that side stays where it
+       * is and the handle follows the pointer. The factor is measured against
+       * where the handle started, so it is 1 before the drag and grows from
+       * there — a vertical drag can no longer flip the shape by accident.
+       *
+       * A negative factor is a deliberate flip, which the source allows too:
+       * it only happens when the handle is dragged past the pivot.
+       */
+      const { pivot, anchor } = handleAnchor(active.handle, active.startBounds);
+      const factorX =
+        anchor.x === pivot.x ? 1 : (world.x - pivot.x) / (anchor.x - pivot.x);
+      const factorY =
+        anchor.y === pivot.y ? 1 : (world.y - pivot.y) / (anchor.y - pivot.y);
 
-      const affectsX =
-        handle === "nw" ||
-        handle === "ne" ||
-        handle === "se" ||
-        handle === "sw" ||
-        handle === "e" ||
-        handle === "w";
-      const affectsY =
-        handle === "nw" ||
-        handle === "ne" ||
-        handle === "se" ||
-        handle === "sw" ||
-        handle === "n" ||
-        handle === "s";
+      // A degenerate factor would flatten the selection irrecoverably; the
+      // sign is kept, because a flip is a legitimate outcome.
+      const safeX = Math.abs(factorX) < 0.05 ? (factorX < 0 ? -0.05 : 0.05) : factorX;
+      const safeY = Math.abs(factorY) < 0.05 ? (factorY < 0 ? -0.05 : 0.05) : factorY;
 
-      const scaleX = affectsX ? offsetX / halfWidth : 1;
-      const scaleY = affectsY ? offsetY / halfHeight : 1;
+      // Each move applies the *ratio* to the factor applied so far, so the
+      // total always matches the factor measured from the start of the drag.
+      const stepX = active.lastScaleX === 0 ? 1 : safeX / active.lastScaleX;
+      const stepY = active.lastScaleY === 0 ? 1 : safeY / active.lastScaleY;
+      active.lastScaleX = safeX;
+      active.lastScaleY = safeY;
 
-      // Guard against a degenerate (zero-width) scale, which would flatten the
-      // selection irrecoverably.
-      const safeX = Math.abs(scaleX) < 0.05 ? (scaleX < 0 ? -0.05 : 0.05) : scaleX;
-      const safeY = Math.abs(scaleY) < 0.05 ? (scaleY < 0 ? -0.05 : 0.05) : scaleY;
-
-      // Apply the incremental ratio so repeated moves compose correctly.
-      const stepX = safeX / active.lastScale;
-      const stepY = safeY / active.lastScale;
-      active.lastScale = affectsX && affectsY ? Math.max(safeX, safeY) : 1;
-
-      doc.scaleSelection(
-        affectsX ? stepX : 1,
-        affectsY ? stepY : 1,
-        pivot.x,
-        pivot.y,
-        true,
-      );
+      doc.scaleSelection(stepX, stepY, pivot.x, pivot.y, true);
       schedulePaint();
       return;
     }
@@ -709,18 +713,21 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
     if (active?.kind === "move") {
       // The live moves already mutated the document; commit one repaint.
+      doc.endEdit();
       doc.bump();
       return;
     }
 
     if (active?.kind === "erase") {
       cursor.current = null;
+      doc.endEdit();
       schedulePaint();
       return;
     }
 
     if (active?.kind === "transform") {
       // The live transforms already mutated the document; commit one repaint.
+      doc.endEdit();
       doc.bump();
       return;
     }
@@ -794,6 +801,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
           className="menu-button"
           title="Undo the previous operation (Key Z)"
           onClick={undo}
+          data-testid="tool-undo"
         >
           <span className="html-face">
             <UndoIcon />

@@ -192,13 +192,20 @@ export interface Bounds {
  */
 export function strokeBounds(stroke: Stroke): Bounds {
   const half = stroke.style.width / 2;
+  // The padding follows the stroke's own scale. Without that the box would
+  // keep a constant margin while the shape grows, and the handle would drift
+  // away from the pointer it is being dragged with.
+  const scaleX = Math.hypot(stroke.transform.a, stroke.transform.b) || 1;
+  const scaleY = Math.hypot(stroke.transform.c, stroke.transform.d) || 1;
+  const padX = half * scaleX;
+  const padY = half * scaleY;
   if (stroke.points.length === 0) {
     const origin = applyTransform(stroke.transform, 0, 0);
     return {
-      minX: origin.x - half,
-      minY: origin.y - half,
-      maxX: origin.x + half,
-      maxY: origin.y + half,
+      minX: origin.x - padX,
+      minY: origin.y - padY,
+      maxX: origin.x + padX,
+      maxY: origin.y + padY,
     };
   }
   let minX = Infinity;
@@ -213,10 +220,10 @@ export function strokeBounds(stroke: Stroke): Bounds {
     if (world.y > maxY) maxY = world.y;
   }
   return {
-    minX: minX - half,
-    minY: minY - half,
-    maxX: maxX + half,
-    maxY: maxY + half,
+    minX: minX - padX,
+    minY: minY - padY,
+    maxX: maxX + padX,
+    maxY: maxY + padY,
   };
 }
 
@@ -235,6 +242,51 @@ export function unionBounds(list: Bounds[]): Bounds | null {
     };
   }
   return out;
+}
+
+/* --- Selection handles ---------------------------------------------------- */
+
+/** The handles a selection offers. */
+export type SelectionHandle = "nw" | "ne" | "se" | "sw" | "n" | "e" | "s" | "w" | "rotate";
+
+/**
+ * Where a handle sits and what stays put while it moves.
+ *
+ * Scaling a selection from a handle means the *opposite* edge or corner stays
+ * where it is, so the pivot is that opposite edge and the anchor is where the
+ * handle started. The factor is then `(current - pivot) / (anchor - pivot)`:
+ * it is 1 while the handle has not moved, it grows as the handle is pulled
+ * away from the pivot, and it turns negative — a flip — when the handle is
+ * dragged past the pivot.
+ */
+export function handleAnchor(
+  handle: SelectionHandle,
+  bounds: Bounds,
+): { pivot: { x: number; y: number }; anchor: { x: number; y: number } } {
+  const { minX, minY, maxX, maxY } = bounds;
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  switch (handle) {
+    case "nw":
+      return { pivot: { x: maxX, y: maxY }, anchor: { x: minX, y: minY } };
+    case "ne":
+      return { pivot: { x: minX, y: maxY }, anchor: { x: maxX, y: minY } };
+    case "se":
+      return { pivot: { x: minX, y: minY }, anchor: { x: maxX, y: maxY } };
+    case "sw":
+      return { pivot: { x: maxX, y: minY }, anchor: { x: minX, y: maxY } };
+    case "n":
+      return { pivot: { x: centerX, y: maxY }, anchor: { x: centerX, y: minY } };
+    case "s":
+      return { pivot: { x: centerX, y: minY }, anchor: { x: centerX, y: maxY } };
+    case "w":
+      return { pivot: { x: maxX, y: centerY }, anchor: { x: minX, y: centerY } };
+    case "e":
+      return { pivot: { x: minX, y: centerY }, anchor: { x: maxX, y: centerY } };
+    default:
+      // The rotate handle never scales; it spins about the middle.
+      return { pivot: { x: centerX, y: centerY }, anchor: { x: centerX, y: centerY } };
+  }
 }
 
 /* --- Hit testing ---------------------------------------------------------- */

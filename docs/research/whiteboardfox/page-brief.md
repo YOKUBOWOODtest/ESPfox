@@ -171,6 +171,8 @@ The room is stored per board in `localStorage` under `wf_room_<boardId>` and mir
 
 `npm run check` passes: ESLint clean, `tsc --noEmit` clean, `next build` prerenders 8 static routes (`/`, `/pro`, `/account`, `/lobby`, `/options`, `/privacy`, `/terms`, `/_not-found`) plus the dynamic `/board/[id]`.
 
+A headless-Chrome-over-CDP regression (`scripts/board-canvas-check.mjs`) asserts the canvas pixel buffer end to end — buffer sizing, marker colour/width, the live preview, `Rellenar`, the gradient settings, the Select tool (drag, scale, undo) and the whole room layer. It is **46/46 green**.
+
 Geometry re-measured on the clone at a 1000px viewport against the source's numbers:
 
 | Element | Source | Clone |
@@ -227,6 +229,8 @@ Verified for this round's changes:
 - **Board palette** → clicking `Draw` opens `[data-testid="colorsPanel"]` (7 cells, 70×70, 1px solid black border on `rgb(238,238,238)`), and the seven `path[fill]` values equal the live DOM's `#4a4a4aff`, `#2761a4ff`, `#44bff2ff`, `#c1086cff`, `#98bb13ff`, `#ac90e3ff`, `#e6b82eff`.
 - **Board users panel** → rows are 60px with a `.avatar-container` SVG (`#FFFFFF88` + `hsl(h, 75%, 43%)` circles), status dots resolve to `rgb(0, 192, 4)` (online) and `rgb(131, 94, 255)` (pro), `.usersScrollArea` / `#usersTable` / `.usersSearchBox` are present, and both `.whoDrewBtn`s read `Who drew what?` and `Search user`.
 - **Board drawing** → a synthetic pointer drag paints 1870 pixels on `#canvasId`; `Undo` returns the alpha channel to 0.
+- **Select-tool scaling** → dragging the top handle of a selected 100×100 rectangle up by 100px moves the ink from `[120,700]–[219,799]` to `[120,600]–[219,799]`: the bottom edge stays exactly where it was and the top follows the pointer, with no sign of a flip. Dragging the SE corner of a 160×100 rectangle outward by `(+40,+40)` grows it to `[120,700]–[319,839]` — the **opposite (NW) corner stays at `[120,700]`**.
+- **Undo after a Select-tool change** → Undo puts the scaled rectangle back at `[120,700]–[219,799]`, and it puts a shape that was dragged 60px right back from `[180,700]–[279,799]` to `[120,700]–[219,799]`. The undo history is a list of pre-edit snapshots (50 deep), and a gesture captures one at its start and keeps it only if the document really changed, so one drag is one undo step.
 - **Board deep link** → visiting `/board/<id>` directly renders the board (no `board-gate`) and inherits the stored nickname and id.
 - **Board share link** → `[data-testid="board-share-path"]` reads `https://whiteboardmod.com/board/<id>`.
 - **Lobby recent list** → after visiting a board, the Lobby lists it as a `/board/<id>` link.

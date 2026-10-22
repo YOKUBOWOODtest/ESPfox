@@ -66,17 +66,20 @@ The canvas is an **infinite, stroke-based document**, not the source's flat poin
 
 | Module | Responsibility |
 | --- | --- |
-| `src/lib/board/stroke.ts` | `Point`/`Stroke`/`Transform` model and pure geometry: `hitStroke`, `lassoHitsStroke`, `pointInPolygon`, `unionBounds`, plus translate/scale/rotate-about-pivot maths. |
+| `src/lib/board/stroke.ts` | `Point`/`Stroke`/`Transform` model and pure geometry: `hitStroke`, `lassoHitsStroke`, `pointInPolygon`, `unionBounds`, `handleAnchor` (where a handle sits and what stays put while it moves), plus translate/scale/rotate-about-pivot maths. |
 | `src/lib/board/camera.ts` | Infinite pan/zoom: `screenToWorld`, `worldToScreen`, `panBy`, `zoomAt` (cursor-anchored), `clampScale` (0.1×–8×), `formatZoom`. |
 | `src/lib/board/grid.ts` | Adaptive infinite grid: `BASE_STEP` 40 world units, doubled until on-screen spacing reaches `MIN_SCREEN_STEP` 18px, with every 5th line drawn heavier. |
 | `src/lib/board/render.ts` | One-frame painter: grid, strokes, lasso path, selection box with 8 scale handles + 1 rotate handle, eraser ring. Pure — no React. |
-| `use-board-doc.ts` | The document: strokes in a ref, `commitStroke`, `eraseAt`, `selectWithLasso`, `moveSelection`/`scaleSelection`/`rotateSelection`, `undo`, `clearAll`. |
+| `use-board-doc.ts` | The document: strokes in a ref, `commitStroke`, `eraseAt`, `selectWithLasso`, `moveSelection`/`scaleSelection`/`rotateSelection`, an undo history (`beginEdit`/`endEdit`/`undo`), `clearAll`. |
 
 Behaviour:
 
 - **Stroke-based erasure.** Pressing with the Erase tool deletes every stroke it touches *entirely*; there is no pixel painting, so a stroke can never be left half-erased.
 - **Lasso selection and transform.** The Select tool traces a free-form lasso; strokes it touches are selected, then a dashed coral bounding box with 8 square scale handles (4 corners + 4 edge midpoints) and a round rotate handle appears above it.
 - **A selected shape can be dragged around.** Pressing on the selection's own ink — or, for a filled shape, anywhere inside its fill — and dragging moves every selected stroke, in addition to the scale and rotate handles. A press on empty canvas still starts a fresh lasso, so a new selection can always be drawn.
+- **Scaling pivots on the opposite edge, so it cannot flip by accident.** Dragging a handle measures the factor against the box **as it was when the gesture started** — not against the live bounds — and the pivot is the **opposite** edge or corner, so that side stays put and the handle tracks the pointer. The factor is `(pointer − pivot) / (handle − pivot)`, so it is 1 before the drag, grows as the handle is pulled away, and only turns negative (a deliberate flip) when the handle is dragged *past* the pivot. Every pointer move applies the **ratio** between the new factor and the last one, per axis, so the shape can never oscillate. The old centre-pivot maths turned a plain upward drag into a mirror image, which is what made the shape appear to flip and spin.
+- **The selection box hugs the ink, and keeps hugging it while it is scaled.** The box is padded by half the brush width, because a thick stroke's ink runs that far past its centreline — but the padding follows the stroke's own scale, so the handle stays under the pointer instead of drifting away from it as the shape grows.
+- **Undo takes back every change, including the Select tool's.** The document keeps a history of pre-edit snapshots (50 deep). A gesture — a move, a scale, a rotation, an erase — captures one snapshot when it starts and keeps it only if the document really changed, so one drag is one undo step and a click that moved nothing does not eat a step.
 - **The Select tool never paints.** The lasso's purpose is recorded on the gesture itself (`fillType: "fill" | "gradient-fill" | null`) instead of being read from the live Draw-panel state, so switching to *Rellenar* or *Relleno degradado* and then picking the Select tool still selects rather than filling the lassoed area.
 - **Draw options on double-click.** A single click picks the Draw tool; a double click (on the button or the canvas) opens the Draw options panel (`draw-panel.tsx`), which has a **Main** and a **Shapes** tab. The Main tab departs from the source, which offers only 7 fixed colours, 4 fixed widths and a smoothing slider:
   - **Artist's colour wheel instead of the 7-colour palette.** A 200px hue ring, a saturation/value square in its centre, a hex field, Brightness and Saturation sliders, and a row of the last 8 colours, in `color-wheel.tsx`. The model is **HSV, not HSL**: "this blue, but darker" is a single multiply on value, whereas HSL lightness would desaturate towards white and black at once, so a pure hue could never be reached at full brightness. Stroke colours carry their alpha inline (`#rrggbbaa`), so the wheel edits the `#rrggbb` prefix and the opacity slider owns the alpha. Picking a hue while saturation is 0 (a fresh wheel starts on the grey `#4a4a4a`) lifts saturation to 1, because otherwise picking a hue on a grey does nothing visible.
@@ -246,18 +249,18 @@ docs/research/whiteboardfox/              page-brief.md, source.html, style.css,
                                           gallery-posts.json
 docs/design-references/                   source + local screenshots, comparison.png,
                                           board-draw-tools.png (marker + gradient fill)
-scripts/board-canvas-check.mjs            headless-Chrome canvas regression (39 checks)
+scripts/board-canvas-check.mjs            headless-Chrome canvas regression (46 checks)
 ```
 
 ## Checks run
 
 - `npm run check` — ESLint clean (0 errors, 0 warnings), `tsc --noEmit` clean, `next build` prerenders 8 static routes (`/`, `/pro`, `/account`, `/lobby`, `/options`, `/privacy`, `/terms`, `/_not-found`) plus the dynamic `/board/[id]`.
-- A headless-Chrome-over-CDP regression exercises the canvas end to end — buffer sizing, marker colour/width commits, the live preview, `Rellenar`, and the gradient settings (type radios, preview, stop rows, add/remove, position slider) with two-, three-stop, radial and repositioned ramps — asserting the resulting pixels, plus the Select tool dragging a selected shape and never painting. 39/39 green, including the room checks (the bar sits under Clear, every room control is on the board, the invite popover offers the board's own address, a message shows up and is stored under one key per board, a reaction floats, the room survives a reload, and the unread badge appears for a message that arrives while the chat is closed and clears when it is opened again). Run it with `npm run dev` in one shell and `node scripts/board-canvas-check.mjs` in another.
+- A headless-Chrome-over-CDP regression exercises the canvas end to end — buffer sizing, marker colour/width commits, the live preview, `Rellenar`, and the gradient settings (type radios, preview, stop rows, add/remove, position slider) with two-, three-stop, radial and repositioned ramps — asserting the resulting pixels, plus the Select tool dragging a selected shape and never painting, scaling a shape from its opposite edge without flipping it, and Undo taking both the scale and the move back. 46/46 green, including the room checks (the bar sits under Clear, every room control is on the board, the invite popover offers the board's own address, a message shows up and is stored under one key per board, a reaction floats, the room survives a reload, and the unread badge appears for a message that arrives while the chat is closed and clears when it is opened again). Run it with `npm run dev` in one shell and `node scripts/board-canvas-check.mjs` in another.
 - Layout compared numerically against the live page via the browser's computed styles.
 - Pixel diff of the source and clone at 1000×700 — residual differences are the empty ad column, the ad-driven vertical offset, font rasterisation, and thumbnail content.
 - Every interaction above was exercised in a real browser and its resulting DOM state asserted.
 - Board screen measured against `https://r9.whiteboardfox.com/96635256-2598-4487` and asserted locally: `#menuStrip` 140×700 `rgb(238,238,238)` in column flow, `#canvasId` 860×648 at x=140 (648 = 700 − the 52px chat bar), seven 140×70 buttons at y=0…420 with 13px labels and the active-tool inset border, the source's palette cells at 70×70 with all seven fills equal to the live DOM (the clone replaces that palette with the colour wheel), and a `.liveUsersPanel` whose rows are 60px with dots `rgb(0,192,4)`/`rgb(131,94,255)`.
-- Creating a board from the Lobby rewrites `/board/new` to `/board/<minted id>`, and the share link reads `https://whiteboardmod.com/board/<id>`. A pointer drag paints, Undo clears it, and no page in the app links to `whiteboardfox.com`.
+- Creating a board from the Lobby rewrites `/board/new` to `/board/<minted id>`, and the share link reads `https://whiteboardmod.com/board/<id>`. A pointer drag paints, Undo clears it — and also takes back a Select-tool move, scale or rotation — and no page in the app links to `whiteboardfox.com`.
 
 ### Canvas engine assertions (numerical, in-browser)
 
@@ -273,8 +276,10 @@ Each of these was measured from the canvas pixel buffer rather than eyeballed:
 | Lasso selection | A lasso enclosing two strokes produced a coral selection box (1060 coral pixels, bounds `[143,116]–[446,256]`). |
 | Scale handles | Exactly 8 square handles (corners `(130,118) (459,118) (459,281) (130,281)` + edge midpoints `(295,118) (459,200) (295,281) (130,200)`). |
 | Rotate handle | One round handle 26px above the top edge, at `(295,92)`. |
-| Scaling | Dragging the SE handle outward grew the ink bounds from `[148,148]–[441,251]` (1568px) to `[133,121]–[456,278]` (1966px). |
-| Rotating | A 90° swing of the rotate handle swapped the ink's width and height (323×157 → 157×323) with pixel count preserved (1966 → 1964). |
+| Scaling | Dragging the SE handle outward by `(+40,+40)` grew a 160×100 green rectangle from `[120,700]–[279,799]` to `[120,700]–[319,839]` — the **opposite (NW) corner stayed exactly where it was** (`[120,700]`), the width grew 160 → 200 and the height 100 → 140. |
+| Rotating | A 90° swing of the rotate handle swapped the ink's width and height (160×100 → 100×160, `[150,670]–[249,829]`) with the pixel count preserved (15776 → 15776). |
+| Undo takes a scale back | After the drag above, Undo put the rectangle back at `[120,700]–[279,799]` — the selection's own transform, not just the last stroke, is undone. |
+| Undo takes a move back | Dragging the selected rectangle 60px right moved its ink to `[180,700]–[279,799]`; Undo put it back at `[120,700]–[279,799]`. |
 | Draw double-click | `dblclick` on Draw opens the Draw options panel: colour wheel (hue ring + saturation/value square + hex), gradient settings (Lineal/Radial radios, preview bar, one swatch + position slider + `+` row per stop), style selector, width slider + editable number, opacity. |
 | Live preview uses the current style | Mid-gesture, before the pointer is released, the canvas already carries the chosen colour (`rgb(255,0,0)` for `#ff0000`) — the paint loop reads the style through refs, so the in-progress stroke cannot fall back to the mount-time style. |
 | Marker commit | The committed stroke keeps the chosen colour and width; the measured vertical run of ink was 20px for a width-20 stroke. |
@@ -297,5 +302,5 @@ Each of these was measured from the canvas pixel buffer rather than eyeballed:
 
 > Note for anyone re-running these: the browser harness keeps tabs `hidden`, and a hidden tab never fires `requestAnimationFrame`. The canvas repaints from rAF for continuous gestures (pan, in-progress lasso, live transforms), so those are only observable in a visible tab. Everything that repaints through a React state change — stroke commits, tool switches, zoom label, selection commits — is measurable regardless, which is how the table above was produced.
 >
-> The canvas assertions above were re-run against a headless Chrome driven over CDP, with `requestAnimationFrame` polyfilled to `setTimeout` via `Page.addScriptToEvaluateOnNewDocument` (headless Chrome does not drive rAF either). Pointer input goes through `Input.dispatchMouseEvent`, so the board sees trusted events and `setPointerCapture` works. The full regression is 39/39 green.
+> The canvas assertions above were re-run against a headless Chrome driven over CDP, with `requestAnimationFrame` polyfilled to `setTimeout` via `Page.addScriptToEvaluateOnNewDocument` (headless Chrome does not drive rAF either). Pointer input goes through `Input.dispatchMouseEvent`, so the board sees trusted events and `setPointerCapture` works. The full regression is 46/46 green.
 
