@@ -21,6 +21,7 @@ export function RoomChatBar({
   room,
   author,
   hue,
+  avatar,
   mic,
 }: {
   room: RoomApi;
@@ -28,6 +29,8 @@ export function RoomChatBar({
   author: string;
   /** Hue of the avatar, so it matches the participants panel. */
   hue: number;
+  /** The picture the visitor set as their avatar, when there is one. */
+  avatar?: string | null;
   mic: MicApi;
 }) {
   const [draft, setDraft] = useState("");
@@ -44,13 +47,25 @@ export function RoomChatBar({
   return (
     <div className="roomChatBar" data-testid="room-chat-bar">
       <div className="roomChatBarInner">
-        <span
-          className="roomAvatar"
-          style={{ backgroundColor: `hsl(${hue}, 75%, 43%)` }}
-          aria-hidden="true"
-        >
-          {author.slice(0, 1).toUpperCase()}
-        </span>
+        {avatar ? (
+          // The avatar is a data URL the visitor chose themselves, so a plain
+          // image is the right element here.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className="roomAvatar roomAvatarImage"
+            src={avatar}
+            alt=""
+            data-testid="room-chat-avatar"
+          />
+        ) : (
+          <span
+            className="roomAvatar"
+            style={{ backgroundColor: `hsl(${hue}, 75%, 43%)` }}
+            aria-hidden="true"
+          >
+            {author.slice(0, 1).toUpperCase()}
+          </span>
+        )}
         <span className="roomChatName">{author}</span>
 
         <div className="roomMicChip" data-testid="room-chat-mic" data-state={mic.state}>

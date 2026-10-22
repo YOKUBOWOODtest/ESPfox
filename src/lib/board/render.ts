@@ -19,6 +19,7 @@ import {
   formatDuration,
   itemCorners,
   itemHalfSize,
+  itemsInPaintOrder,
   type ImportedItem,
 } from "./imported";
 import {
@@ -161,8 +162,9 @@ export function render(input: RenderInput): void {
     drawStroke(context, stroke, camera.scale, tint);
   }
 
-  // Imported media sits on top of the ink, the way a sticker does.
-  for (const item of input.items ?? []) {
+  // Imported media sits on top of the ink, the way a sticker does. Pinned
+  // items go last, so they stay in front of the rest of the stack.
+  for (const item of itemsInPaintOrder(input.items ?? [])) {
     drawItem(context, item, flip, item.id === input.playingItemId);
   }
 

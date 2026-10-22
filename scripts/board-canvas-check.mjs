@@ -1351,7 +1351,9 @@ async function main() {
     JSON.stringify(importMenu),
   );
 
-  // A plain magenta square, 120 by 120.
+  // A magenta square, 120 by 120, with a green patch in its top-left corner.
+  // The patch is what makes "Mirror" observable: a plain square looks the same
+  // either way round.
   await evaluate(`(async () => {
     const canvas = document.createElement('canvas');
     canvas.width = 120;
@@ -1359,6 +1361,8 @@ async function main() {
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ff00ff';
     ctx.fillRect(0, 0, 120, 120);
+    ctx.fillStyle = '#00ff00';
+    ctx.fillRect(8, 8, 28, 28);
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     const file = new File([blob], 'magenta-square.png', { type: 'image/png' });
     const transfer = new DataTransfer();
@@ -1412,6 +1416,8 @@ async function main() {
     "Lock",
     "Mirror",
     "Duplicate",
+    "Download Original",
+    "Set as my avatar",
     "Delete",
   ];
   check(
@@ -1491,14 +1497,353 @@ async function main() {
     JSON.stringify(undone),
   );
 
-  // And the three-dot menu can throw the item away.
-  await mouse("mousePressed", pageX(MID.x + 12), pageY(MID.y + 86), 1);
-  await mouse("mouseReleased", pageX(MID.x + 12), pageY(MID.y + 86), 0);
+  // --- the Select tool: drag, options, and the three-dot actions -----------
+  const dropped = { x: MID.x + 80, y: MID.y + 40 };
+  await mouse("mousePressed", pageX(MID.x), pageY(MID.y), 1);
+  for (let step = 1; step <= 8; step += 1) {
+    await mouse("mouseMoved", pageX(MID.x + step * 10), pageY(MID.y + step * 5), 1);
+    await sleep(25);
+  }
+  await mouse("mouseReleased", pageX(dropped.x), pageY(dropped.y), 0);
+  await sleep(500);
+  const dragged = await blueBounds(
+    dropped.x - 160,
+    dropped.y - 160,
+    dropped.x + 160,
+    dropped.y + 160,
+  );
+  check(
+    "the Select tool drags the item",
+    dragged !== null &&
+      Math.abs(dragged.minX - (dropped.x - 60)) <= 6 &&
+      Math.abs(dragged.minY - (dropped.y - 60)) <= 6 &&
+      Math.abs(dragged.maxX - dragged.minX - 120) <= 6 &&
+      Math.abs(dragged.maxY - dragged.minY - 120) <= 6,
+    JSON.stringify(dragged),
+  );
+
+  const openMenuAt = async (x, y) => {
+    await mouse("mousePressed", pageX(x), pageY(y), 1);
+    await mouse("mouseReleased", pageX(x), pageY(y), 0);
+    await sleep(500);
+  };
+  const menuButtons = () =>
+    evaluate(
+      `Array.from(document.querySelectorAll('[data-testid="item-menu"] button')).map((b) => b.textContent.trim())`,
+    );
+
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  const movedMenu = await menuButtons();
+  check(
+    "the menu shows the reference options in order",
+    movedMenu.join("|") === wanted.join("|"),
+    JSON.stringify(movedMenu),
+  );
+
+  // Pin toggles, and keeps the item in front of the others.
+  await evaluate(`document.querySelector('[data-testid="item-menu-pin"]').click(); 'pin'`);
+  await sleep(400);
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  const pinnedLabels = await menuButtons();
+  check(
+    "Pin pins the item",
+    pinnedLabels.includes("Unpin") && !pinnedLabels.includes("Pin"),
+    JSON.stringify(pinnedLabels),
+  );
+  await evaluate(`document.querySelector('[data-testid="item-menu-pin"]').click(); 'unpin'`);
+  await sleep(400);
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  const unpinnedLabels = await menuButtons();
+  check(
+    "Pin toggles back to Unpin",
+    unpinnedLabels.includes("Pin") && !unpinnedLabels.includes("Unpin"),
+    JSON.stringify(unpinnedLabels),
+  );
+
+  // A press on the background puts the options away — both the menu and the
+  // row of small options drawn on the canvas.
+  const away = { x: MID.x + 440, y: MID.y + 300 };
+  await mouse("mousePressed", pageX(away.x), pageY(away.y), 1);
+  await mouse("mouseReleased", pageX(away.x), pageY(away.y), 0);
+  await sleep(500);
+  const menuClosedByBackground = await evaluate(`!document.querySelector('[data-testid="item-menu"]')`);
+  const chromeGone = await countSelection(
+    dropped.x - 80,
+    dropped.y + 76,
+    dropped.x + 80,
+    dropped.y + 96,
+  );
+  check(
+    "a press on the background puts the options away",
+    menuClosedByBackground && chromeGone === 0,
+    `menuGone=${menuClosedByBackground} coral=${chromeGone}`,
+  );
+
+  // Picking the picture up again brings them back, without moving it.
+  await mouse("mousePressed", pageX(dropped.x), pageY(dropped.y), 1);
+  await mouse("mouseReleased", pageX(dropped.x), pageY(dropped.y), 0);
+  await sleep(500);
+  const chromeBack = await countSelection(
+    dropped.x - 80,
+    dropped.y + 76,
+    dropped.x + 80,
+    dropped.y + 96,
+  );
+  const stillMoved = await blueBounds(
+    dropped.x - 160,
+    dropped.y - 160,
+    dropped.x + 160,
+    dropped.y + 160,
+  );
+  check(
+    "selecting the picture again brings the options back",
+    chromeBack > 0 &&
+      stillMoved !== null &&
+      Math.abs(stillMoved.minX - (dropped.x - 60)) <= 4 &&
+      Math.abs(stillMoved.minY - (dropped.y - 60)) <= 4,
+    `coral=${chromeBack} bounds=${JSON.stringify(stillMoved)}`,
+  );
+
+  // Lock: the item keeps its place.
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  await evaluate(`document.querySelector('[data-testid="item-menu-lock"]').click(); 'lock'`);
+  await sleep(400);
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  const lockedLabels = await menuButtons();
+  check(
+    "Lock locks the item",
+    lockedLabels.includes("Unlock") && !lockedLabels.includes("Lock"),
+    JSON.stringify(lockedLabels),
+  );
+  await evaluate(
+    `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'esc'`,
+  );
+  await sleep(300);
+  await mouse("mousePressed", pageX(dropped.x), pageY(dropped.y), 1);
+  for (let step = 1; step <= 5; step += 1) {
+    await mouse("mouseMoved", pageX(dropped.x + step * 8), pageY(dropped.y), 1);
+    await sleep(25);
+  }
+  await mouse("mouseReleased", pageX(dropped.x + 40), pageY(dropped.y), 0);
+  await sleep(500);
+  const lockedStill = await blueBounds(
+    dropped.x - 160,
+    dropped.y - 160,
+    dropped.x + 160,
+    dropped.y + 160,
+  );
+  check(
+    "a locked item cannot be dragged",
+    lockedStill !== null && Math.abs(lockedStill.minX - (dropped.x - 60)) <= 4,
+    JSON.stringify(lockedStill),
+  );
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  await evaluate(`document.querySelector('[data-testid="item-menu-lock"]').click(); 'unlock'`);
+  await sleep(400);
+
+  // Mirror: the green patch changes sides.
+  const markerLeft = await sampleAt(dropped.x - 38, dropped.y - 38);
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  await evaluate(`document.querySelector('[data-testid="item-menu-mirror"]').click(); 'mirror'`);
+  await sleep(500);
+  const markerRight = await sampleAt(dropped.x + 38, dropped.y - 38);
+  const markerLeftAfter = await sampleAt(dropped.x - 38, dropped.y - 38);
+  check(
+    "Mirror flips the picture",
+    markerLeft.g > 150 &&
+      markerLeft.r < 120 &&
+      markerRight.g > 150 &&
+      markerRight.r < 120 &&
+      markerLeftAfter.r > 180,
+    JSON.stringify({ markerLeft, markerRight, markerLeftAfter }),
+  );
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  await evaluate(`document.querySelector('[data-testid="item-menu-mirror"]').click(); 'mirror'`);
+  await sleep(500);
+
+  // Download Original hands the file to the browser.
+  await evaluate(`(() => {
+    window.__itemDownloads = [];
+    window.__anchorClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      window.__itemDownloads.push({ href: this.href, name: this.download });
+    };
+    return 'stubbed';
+  })()`);
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  await evaluate(`document.querySelector('[data-testid="item-menu-download"]').click(); 'download'`);
+  await sleep(300);
+  const downloads = await evaluate(`window.__itemDownloads`);
+  check(
+    "Download Original saves the file",
+    downloads.length === 1 &&
+      downloads[0].name === "magenta-square.png" &&
+      (downloads[0].href.startsWith("data:image/png") ||
+        downloads[0].href.startsWith("blob:")),
+    JSON.stringify(
+      downloads.map((download) => ({
+        name: download.name,
+        href: String(download.href).slice(0, 22),
+      })),
+    ),
+  );
+  await evaluate(`HTMLAnchorElement.prototype.click = window.__anchorClick; 'restored'`);
+
+  // Set as my avatar shows the picture in the room bar.
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  await evaluate(`document.querySelector('[data-testid="item-menu-avatar"]').click(); 'avatar'`);
+  await sleep(900);
+  const avatar = await evaluate(`(() => {
+    const stored = localStorage.getItem('wf_avatar') || '';
+    return {
+      stored: stored.slice(0, 22),
+      shown: !!document.querySelector('[data-testid="room-chat-avatar"]'),
+    };
+  })()`);
+  check(
+    "Set as my avatar uses the picture in the room bar",
+    avatar.stored.startsWith("data:image/") && avatar.shown,
+    JSON.stringify(avatar),
+  );
+
+  // Duplicate, then restack the two copies.
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
+  await evaluate(`document.querySelector('[data-testid="item-menu-duplicate"]').click(); 'duplicate'`);
   await sleep(600);
+  const doubled = await blueBounds(
+    dropped.x - 180,
+    dropped.y - 180,
+    dropped.x + 180,
+    dropped.y + 180,
+  );
+  check(
+    "Duplicate makes a second copy",
+    doubled !== null &&
+      Math.abs(doubled.maxX - doubled.minX - 144) <= 8 &&
+      Math.abs(doubled.maxY - doubled.minY - 144) <= 8,
+    JSON.stringify(doubled),
+  );
+
+  // The copy lands 24px down-right of the original and is selected. Its green
+  // patch overlaps the original, which is how the stacking is observed.
+  const copyDots = { x: dropped.x + 36, y: dropped.y + 110 };
+  const copyInFront = await sampleAt(dropped.x - 14, dropped.y - 14);
+  await openMenuAt(copyDots.x, copyDots.y);
+  await evaluate(`document.querySelector('[data-testid="item-menu-back"]').click(); 'back'`);
+  await sleep(500);
+  const copyBehind = await sampleAt(dropped.x - 14, dropped.y - 14);
+  await openMenuAt(copyDots.x, copyDots.y);
+  await evaluate(`document.querySelector('[data-testid="item-menu-front"]').click(); 'front'`);
+  await sleep(500);
+  const copyBackInFront = await sampleAt(dropped.x - 14, dropped.y - 14);
+  check(
+    "Move to back and Move to front restack the copies",
+    copyInFront.g > 150 &&
+      copyBehind.r > 180 &&
+      copyBackInFront.g > 150,
+    JSON.stringify({ copyInFront, copyBehind, copyBackInFront }),
+  );
+
+  for (let step = 0; step < 3; step += 1) {
+    await evaluate(`document.querySelector('[data-testid="tool-undo"]').click(); 'undo'`);
+    await sleep(400);
+  }
+  const single = await blueBounds(
+    dropped.x - 160,
+    dropped.y - 160,
+    dropped.x + 160,
+    dropped.y + 160,
+  );
+  check(
+    "undo removes the duplicate and both restacks",
+    single !== null && Math.abs(single.maxX - single.minX - 120) <= 8,
+    JSON.stringify(single),
+  );
+
+  // And the three-dot menu can throw the item away.
+  await openMenuAt(dropped.x + 12, dropped.y + 86);
   await evaluate(`document.querySelector('[data-testid="item-menu-delete"]').click(); 'deleted'`);
   await sleep(700);
-  const removed = await blueBounds(MID.x - 200, MID.y - 200, MID.x + 200, MID.y + 200);
+  const removed = await blueBounds(
+    dropped.x - 160,
+    dropped.y - 160,
+    dropped.x + 160,
+    dropped.y + 160,
+  );
   check("the three-dot menu deletes the item", removed === null, JSON.stringify(removed));
+
+  // =========================================================================
+  // TEST 16 — a resized picture can still be picked up
+  // =========================================================================
+  // The hit test is in the item's own frame, so it must use the scaled size
+  // once: shrinking a picture used to shrink its grab area twice.
+  await evaluate(`document.querySelector('[data-testid="tool-import"]').click(); 'clicked'`);
+  await sleep(400);
+  await evaluate(`(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 120;
+    canvas.height = 120;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ff00ff';
+    ctx.fillRect(0, 0, 120, 120);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    const file = new File([blob], 'small-square.png', { type: 'image/png' });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    const input = document.querySelector('[data-testid="import-image-file"] input');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'imported';
+  })()`);
+  await sleep(1500);
+
+  // Shrink it to about half its size with the resize handle.
+  await mouse("mousePressed", pageX(MID.x + 36), pageY(MID.y + 86), 1);
+  for (let step = 1; step <= 8; step += 1) {
+    await mouse(
+      "mouseMoved",
+      pageX(MID.x + 36 - (18 * step) / 8),
+      pageY(MID.y + 86 - (43 * step) / 8),
+      1,
+    );
+    await sleep(25);
+  }
+  await mouse("mouseReleased", pageX(MID.x + 18), pageY(MID.y + 43), 0);
+  await sleep(600);
+  const shrunk = await blueBounds(
+    MID.x - 120,
+    MID.y - 120,
+    MID.x + 120,
+    MID.y + 120,
+  );
+  check(
+    "the resize handle can shrink the item",
+    shrunk !== null && Math.abs(shrunk.maxX - shrunk.minX - 60) <= 8,
+    JSON.stringify(shrunk),
+  );
+
+  // Grab it near its edge — inside the 60px picture, outside the 30px square
+  // the double-scaled hit test used to answer on.
+  await mouse("mousePressed", pageX(MID.x + 22), pageY(MID.y), 1);
+  for (let step = 1; step <= 8; step += 1) {
+    await mouse("mouseMoved", pageX(MID.x + 22 + step * 6.25), pageY(MID.y), 1);
+    await sleep(25);
+  }
+  await mouse("mouseReleased", pageX(MID.x + 72), pageY(MID.y), 0);
+  await sleep(600);
+  const pickedUp = await blueBounds(
+    MID.x - 60,
+    MID.y - 120,
+    MID.x + 200,
+    MID.y + 120,
+  );
+  check(
+    "a resized picture can still be dragged by the Select tool",
+    pickedUp !== null &&
+      Math.abs(pickedUp.minX - (MID.x - 30 + 50)) <= 8 &&
+      Math.abs(pickedUp.maxX - pickedUp.minX - 60) <= 8,
+    JSON.stringify(pickedUp),
+  );
 
   // =========================================================================
   // summary

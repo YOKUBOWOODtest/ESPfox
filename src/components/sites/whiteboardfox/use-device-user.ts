@@ -14,6 +14,7 @@ import { useSyncExternalStore } from "react";
 
 const ID_KEY = "wf_device_id";
 const NICKNAME_KEY = "wf_nickname";
+const AVATAR_KEY = "wf_avatar";
 
 /** Short readable prefix, so a device id is recognisable as ours at a glance. */
 export const ID_PREFIX = "WM-";
@@ -27,6 +28,12 @@ export interface DeviceUser {
   id: string;
   /** Chosen nickname, or null until the visitor picks one. */
   nickname: string | null;
+  /**
+   * A picture the visitor set as their avatar, as a data URL, or null for the
+   * generated silhouette. Only this browser sees it: there is no backend to
+   * share it with the rest of the room.
+   */
+  avatar: string | null;
 }
 
 /**
@@ -111,6 +118,14 @@ function readNickname(): string | null {
   }
 }
 
+function readAvatar(): string | null {
+  try {
+    return window.localStorage.getItem(AVATAR_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
 function subscribe(listener: () => void) {
   listeners.add(listener);
   window.addEventListener("storage", listener);
@@ -131,18 +146,20 @@ let cachedSnapshot: DeviceUser | null = null;
 function getSnapshot(): DeviceUser {
   const id = readId();
   const nickname = readNickname();
+  const avatar = readAvatar();
   if (
     !cachedSnapshot ||
     cachedSnapshot.id !== id ||
-    cachedSnapshot.nickname !== nickname
+    cachedSnapshot.nickname !== nickname ||
+    cachedSnapshot.avatar !== avatar
   ) {
-    cachedSnapshot = { id, nickname };
+    cachedSnapshot = { id, nickname, avatar };
   }
   return cachedSnapshot;
 }
 
 /** Server and first client render agree on "nothing known yet". */
-const serverSnapshot: DeviceUser = { id: "", nickname: null };
+const serverSnapshot: DeviceUser = { id: "", nickname: null, avatar: null };
 
 function getServerSnapshot(): DeviceUser {
   return serverSnapshot;
@@ -165,6 +182,21 @@ export function setNickname(value: string) {
 
 export function useDeviceUser(): DeviceUser {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
+/** Persists the avatar picture, or goes back to the silhouette when null. */
+export function setAvatar(value: string | null) {
+  try {
+    if (value) {
+      window.localStorage.setItem(AVATAR_KEY, value);
+    } else {
+      window.localStorage.removeItem(AVATAR_KEY);
+    }
+  } catch {
+    // Storage may be full or blocked; the store still reports the old value.
+    return;
+  }
+  listeners.forEach((listener) => listener());
 }
 
 /** Display form: the chosen nickname, or a neutral placeholder. */

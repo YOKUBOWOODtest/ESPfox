@@ -132,16 +132,34 @@ export function itemCorners(item: ImportedItem): { x: number; y: number }[] {
   }));
 }
 
+/**
+ * The order the items are stacked in.
+ *
+ * The array is the stack, last item in front, and a pinned item keeps its place
+ * on top of the others — the one visible effect pinning has on a board with no
+ * other people in it. Both the renderer and the hit test use this order, so the
+ * picture that is drawn in front is also the one the pointer picks up.
+ */
+export function itemsInPaintOrder(items: ImportedItem[]): ImportedItem[] {
+  if (!items.some((item) => item.pinned)) {
+    return items;
+  }
+  return [...items.filter((item) => !item.pinned), ...items.filter((item) => item.pinned)];
+}
+
 /** Whether a world point lands on the item. */
 export function itemHitTest(item: ImportedItem, worldX: number, worldY: number): boolean {
+  // `itemHalfSize` already applies the scale, so the point is only turned back
+  // into the item's frame here. Dividing by the scale as well would square it:
+  // a picture grown to twice its size would answer on four times its area, and
+  // one shrunk to half would answer on a quarter of it.
   const { halfWidth, halfHeight } = itemHalfSize(item);
-  // Into the item's own frame: undo the rotation, then the scale.
   const dx = worldX - item.x;
   const dy = worldY - item.y;
   const cos = Math.cos(item.rotation);
   const sin = Math.sin(item.rotation);
-  const localX = (dx * cos + dy * sin) / (item.scale || 1);
-  const localY = (-dx * sin + dy * cos) / (item.scale || 1);
+  const localX = dx * cos + dy * sin;
+  const localY = -dx * sin + dy * cos;
   return Math.abs(localX) <= halfWidth && Math.abs(localY) <= halfHeight;
 }
 

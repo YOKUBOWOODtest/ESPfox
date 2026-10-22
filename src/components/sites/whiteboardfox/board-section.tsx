@@ -25,7 +25,7 @@ import {
   writeSettings,
   type BoardSettings,
 } from "./use-board-settings";
-import { useDeviceUser, displayName } from "./use-device-user";
+import { useDeviceUser, displayName, setAvatar } from "./use-device-user";
 import { useLobbyGate } from "./use-lobby-gate";
 import { usePro } from "./use-pro";
 import { useRoom } from "./use-room";
@@ -45,6 +45,7 @@ import {
   createImportedItem,
   itemHitTest,
   itemPlayButtonHit,
+  itemsInPaintOrder,
   type ImportedItem,
   type ImportedMedia,
 } from "@/lib/board/imported";
@@ -587,7 +588,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
    * backwards.
    */
   const itemAt = (worldX: number, worldY: number): ImportedItem | null => {
-    const items = docItems.current;
+    const items = itemsInPaintOrder(docItems.current);
     for (let index = items.length - 1; index >= 0; index -= 1) {
       if (itemHitTest(items[index], worldX, worldY)) {
         return items[index];
@@ -659,6 +660,42 @@ export function BoardSection({ boardId }: { boardId: string }) {
     link.remove();
   };
 
+  /**
+   * Uses an imported picture as the visitor's avatar.
+   *
+   * The original can be a large file, so it is cropped square and shrunk to
+   * 128px first: the data URL then stays small enough for localStorage and is
+   * still sharp in the 30px circles the board draws.
+   */
+  const setItemAsAvatar = (item: ImportedItem) => {
+    if (item.kind !== "image") {
+      return;
+    }
+    const image = new Image();
+    image.onload = () => {
+      const size = 128;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        setAvatar(item.src);
+        return;
+      }
+      const side = Math.min(image.naturalWidth, image.naturalHeight) || 1;
+      const sourceX = (image.naturalWidth - side) / 2;
+      const sourceY = (image.naturalHeight - side) / 2;
+      context.drawImage(image, sourceX, sourceY, side, side, 0, 0, size, size);
+      setAvatar(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    image.onerror = () => {
+      // A format the browser can draw but not decode at this size is rare; the
+      // original still works as an avatar if storage accepts it.
+      setAvatar(item.src);
+    };
+    image.src = item.src;
+  };
+
   /** Plays an imported clip, or stops it when it is already playing. */
   const togglePlayback = (item: ImportedItem) => {
     if (!audioRef.current) {
@@ -725,6 +762,12 @@ export function BoardSection({ boardId }: { boardId: string }) {
       case "duplicate":
         doc.duplicateItem(item.id);
         break;
+      case "download":
+        downloadItem(item);
+        break;
+      case "avatar":
+        setItemAsAvatar(item);
+        break;
       case "delete":
         doc.removeItem(item.id);
         break;
@@ -746,13 +789,24 @@ export function BoardSection({ boardId }: { boardId: string }) {
     const world = screenToWorld(camera.current, screen.x, screen.y);
 
     /**
+     * Any press on the board itself dismisses the three-dot menu. The dots
+     * handle opens it again below when that is what was pressed, and the menu
+     * disappearing is what makes "click the background to put the options
+     * away" work.
+     */
+    if (itemMenu) {
+      setItemMenu(null);
+    }
+
+    /**
      * The play button of an imported clip.
      *
      * It is a control of its own, so it answers whichever tool is active.
      */
-    const playable = docItems.current.find((item) =>
-      itemPlayButtonHit(item, world.x, world.y),
-    );
+    const playable = itemsInPaintOrder(docItems.current)
+      .slice()
+      .reverse()
+      .find((item) => itemPlayButtonHit(item, world.x, world.y));
     if (playable) {
       togglePlayback(playable);
       return;
@@ -1446,6 +1500,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
           room={room}
           author={displayName(user)}
           hue={board.participants[0]?.avatarHue ?? 0}
+          avatar={user.avatar}
           mic={mic}
         />
 

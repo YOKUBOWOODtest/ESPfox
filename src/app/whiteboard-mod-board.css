@@ -1180,6 +1180,12 @@ button.whoDrewBtn:hover {
   flex: 0 0 auto;
 }
 
+/* A picture the visitor chose with "Set as my avatar". */
+.roomAvatarImage {
+  object-fit: cover;
+  background: #f0f0f0;
+}
+
 .roomChatName {
   font-size: 14px;
   color: #333333;

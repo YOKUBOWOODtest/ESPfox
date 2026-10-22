@@ -197,6 +197,11 @@ export function useBoard(
 ): BoardState {
   const getSnapshot = () => boardSnapshot(boardId, user, pro, hostId);
   const getServerSnapshot = () =>
-    boardSnapshot(boardId, { id: "", nickname: readStoredNickname() }, false, null);
+    boardSnapshot(
+      boardId,
+      { id: "", nickname: readStoredNickname(), avatar: null },
+      false,
+      null,
+    );
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

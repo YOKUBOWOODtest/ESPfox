@@ -1,6 +1,7 @@
 "use client";
 
 import { Avatar } from "./board-icons";
+import { useDeviceUser } from "./use-device-user";
 import type { Participant } from "./use-board";
 
 /**
@@ -153,11 +154,15 @@ export function BoardUsersPanel({
  * `.userDeviceId` carries the device id beneath it in small type.
  */
 function UserRow({ participant }: { participant: Participant }) {
+  const user = useDeviceUser();
   return (
     <tr data-self={participant.self ? "true" : "false"} data-testid="participant-row">
       <td>
         <div className="avatar-container">
-          <Avatar hue={participant.avatarHue} />
+          <Avatar
+            hue={participant.avatarHue}
+            imageUrl={participant.self ? user.avatar ?? undefined : undefined}
+          />
           <div className={`${participant.status} userStatus`} />
         </div>
       </td>

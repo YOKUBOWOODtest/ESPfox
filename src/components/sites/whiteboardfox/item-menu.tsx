@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { ImportedItem } from "@/lib/board/imported";
 
 /**
@@ -15,8 +15,9 @@ import type { ImportedItem } from "@/lib/board/imported";
  *     only matters when several people share the room.
  *
  * What is left is the list here.fm actually shows: move it to the front or
- * the back of the stack, pin it, lock it, duplicate it, mirror it, or delete
- * it. The delete entry is red, as it is there.
+ * the back of the stack, pin it, lock it, duplicate it, mirror it, download the
+ * original file, set it as your avatar (pictures only), or delete it. The
+ * delete entry is red, as it is there.
  */
 
 /** What the user picked from the menu. */
@@ -27,6 +28,8 @@ export type ItemMenuAction =
   | "lock"
   | "duplicate"
   | "mirror"
+  | "download"
+  | "avatar"
   | "delete";
 
 export interface ItemMenuProps {
@@ -42,6 +45,8 @@ export interface ItemMenuProps {
 }
 
 export function ItemMenu({ item, x, y, onAction, onClose }: ItemMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
   // Escape closes the menu, the way every other menu on the board does.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -53,6 +58,24 @@ export function ItemMenu({ item, x, y, onAction, onClose }: ItemMenuProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
+  /**
+   * A press anywhere else on the page puts the menu away.
+   *
+   * The board itself also closes it when it deselects the item, but the menu
+   * floats over the whole stage: pressing the toolbar, the room bar or another
+   * picture has to dismiss it too, or it would hang there over a board it no
+   * longer belongs to.
+   */
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [onClose]);
+
   const choose = (action: ItemMenuAction) => {
     onAction(action);
     onClose();
@@ -60,6 +83,7 @@ export function ItemMenu({ item, x, y, onAction, onClose }: ItemMenuProps) {
 
   return (
     <div
+      ref={menuRef}
       className="itemMenu"
       data-testid="item-menu"
       style={{ left: x, top: y }}
@@ -122,6 +146,26 @@ export function ItemMenu({ item, x, y, onAction, onClose }: ItemMenuProps) {
       >
         Duplicate
       </button>
+      <button
+        type="button"
+        className="itemMenuOption"
+        role="menuitem"
+        onClick={() => choose("download")}
+        data-testid="item-menu-download"
+      >
+        Download Original
+      </button>
+      {item.kind === "image" && (
+        <button
+          type="button"
+          className="itemMenuOption"
+          role="menuitem"
+          onClick={() => choose("avatar")}
+          data-testid="item-menu-avatar"
+        >
+          Set as my avatar
+        </button>
+      )}
       <button
         type="button"
         className="itemMenuOption itemMenuDelete"

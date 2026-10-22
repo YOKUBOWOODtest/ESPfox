@@ -199,15 +199,15 @@ Under **Erase** there is an **Import** button. Its menu carries here.fm's three 
 
 An imported piece is not a stroke, so it carries its own geometry: its centre, its intrinsic size, a uniform `scale` and a `rotation`. That is what lets the panel show a size and an angle, and what lets the undo history restore a transformed item by value. A transform is one undo step, like any other edit.
 
-The options under a selected item are the ones here.fm shows, drawn on the canvas in screen space so they keep their size at every zoom: **Download**, **Rotate**, the **three dots** and **Resize**. The rotate handle spins the item around its centre; the resize handle grows it uniformly around its centre (the drag measures the ratio of the pointer's distance to the item's centre, so the item does not chase its own tail while it grows).
+The options under a selected item are the ones here.fm shows, drawn on the canvas in screen space so they keep their size at every zoom: **Download**, **Rotate**, the **three dots** and **Resize**. The item's body is dragged with the **Select** tool; the rotate handle spins it around its centre and the resize handle grows it uniformly around its centre, and those two gestures start only while their own handle is pressed (the drag measures the ratio of the pointer's distance to the item's centre, so the item does not chase its own tail while it grows). A press on the background puts the menu and the options row away, and selecting the picture again brings them back.
 
-The three-dot menu carries here.fm's list — *Move to front*, *Move to back*, *Pin*, *Lock*, *Mirror*, *Duplicate* and a red *Delete* — minus *Make Deck*, which is a here.fm feature with no meaning here, and with the lock's submenu collapsed into a single flag. A locked item cannot be moved, turned or grown.
+The three-dot menu carries here.fm's list — *Move to front*, *Move to back*, *Pin*, *Lock*, *Mirror*, *Duplicate*, *Download Original*, *Set as my avatar* and a red *Delete* — minus *Make Deck*, which is a here.fm feature with no meaning here, and with the lock's submenu collapsed into a single flag. A pinned item stays in front of the stack; a locked item cannot be moved, turned or grown. *Set as my avatar* crops the picture square and stores a 128px copy in `wf_avatar`, which the room bar and the participants row then show in place of the generated silhouette.
 
 ## Verification
 
 `npm run check` passes: ESLint clean, `tsc --noEmit` clean, `next build` prerenders 8 static routes (`/`, `/pro`, `/account`, `/lobby`, `/options`, `/privacy`, `/terms`, `/_not-found`) plus the dynamic `/board/[id]`.
 
-A headless-Chrome-over-CDP regression (`scripts/board-canvas-check.mjs`) asserts the canvas pixel buffer end to end — buffer sizing, marker colour/width, the live preview, `Rellenar`, the gradient settings, the Select tool (drag, scale, undo), the whole room layer, the host's rights, the board settings and the imported items. It is **68/68 green**.
+A headless-Chrome-over-CDP regression (`scripts/board-canvas-check.mjs`) asserts the canvas pixel buffer end to end — buffer sizing, marker colour/width, the live preview, `Rellenar`, the gradient settings, the Select tool (drag, scale, undo), the whole room layer, the host's rights, the board settings and the imported items. It is **84/84 green**.
 
 Geometry re-measured on the clone at a 1000px viewport against the source's numbers:
 
@@ -291,8 +291,9 @@ Verified for the options, the host and the imports:
 - **Flip colors** → the same background reads `rgb(0,17,34)` with the flip on — the exact negative — and `rgb(255,238,221)` with it off.
 - **The grid** → a line at x=80 reads `rgb(232,232,232)`; with *Show grid* off the same pixel is the background colour again. A fill lassoed over world (907,641)–(1017,741) with *Snap to grid* on landed on `[880,640]–[1039,719]`, the 80-unit lattice.
 - **Import** → the **Import** button sits directly under **Erase** in the strip, and its menu offers *Image or file*, *Audio* and *Record voice note*.
-- **An imported picture** → a 120×120 magenta PNG landed at `[620,389]–[739,508]`, the middle of the board, with its coral options row drawn 26px under it. The resize handle grew it to `[560,329]–[799,568]` (240×240, exactly double) and the rotate handle turned it to `[511,280]–[848,617]` (337×337, a 45° swing). Two Undo presses put it back at `[620,389]–[739,508]`.
-- **The three-dot menu** → it opens on the item's dots handle with *Move to front*, *Move to back*, *Pin*, *Lock*, *Mirror*, *Duplicate* and *Delete*; *Delete* leaves no magenta pixel on the canvas.
+- **An imported picture** → a 120×120 magenta PNG landed at `[620,389]–[739,508]`, the middle of the board, with its coral options row drawn 26px under it. The resize handle grew it to `[560,329]–[799,568]` (240×240, exactly double) and the rotate handle turned it to `[511,280]–[848,617]` (337×337, a 45° swing). Two Undo presses put it back at `[620,389]–[739,508]`. With the Select tool, dragging the item moved it to `[700,429]–[819,548]`; a press on the background hid the options (`coral=0`), and selecting it again brought them back without moving it.
+- **A resized picture** → shrinking the 120px picture to 60px and grabbing it 22px from its centre (inside the picture, outside the double-scaled hit box the first build used) still moved it 50px right.
+- **The three-dot menu** → it opens on the item's dots handle with *Move to front*, *Move to back*, *Pin*, *Lock*, *Mirror*, *Duplicate*, *Download Original*, *Set as my avatar* and *Delete*, in that order. *Pin* toggles to *Unpin*, *Lock* to *Unlock* and blocks dragging, *Mirror* moves the picture's green corner patch to the other side, *Download Original* hands the PNG to the browser, *Set as my avatar* stores a data URL and shows it in the room bar, *Duplicate* makes a 144×144 pair whose stacking follows *Move to back*/*Move to front* (checked through the overlapping green patch), and *Delete* leaves no magenta pixel on the canvas.
 
 ## Not reproduced (disclosed)
 
