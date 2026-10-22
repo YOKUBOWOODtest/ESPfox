@@ -74,7 +74,9 @@ The canvas is an **infinite, stroke-based document**, not the source's flat poin
 Behaviour:
 
 - **Stroke-based erasure.** Pressing with the Erase tool deletes every stroke it touches *entirely*; there is no pixel painting, so a stroke can never be left half-erased.
-- **Lasso selection and transform.** The Select tool traces a free-form lasso; strokes it touches are selected, then a dashed coral bounding box with 8 square scale handles (4 corners + 4 edge midpoints) and a round rotate handle appears above it. Dragging inside moves the selection.
+- **Lasso selection and transform.** The Select tool traces a free-form lasso; strokes it touches are selected, then a dashed coral bounding box with 8 square scale handles (4 corners + 4 edge midpoints) and a round rotate handle appears above it.
+- **A selected shape can be dragged around.** Pressing on the selection's own ink — or, for a filled shape, anywhere inside its fill — and dragging moves every selected stroke, in addition to the scale and rotate handles. A press on empty canvas still starts a fresh lasso, so a new selection can always be drawn.
+- **The Select tool never paints.** The lasso's purpose is recorded on the gesture itself (`fillType: "fill" | "gradient-fill" | null`) instead of being read from the live Draw-panel state, so switching to *Rellenar* or *Relleno degradado* and then picking the Select tool still selects rather than filling the lassoed area.
 - **Draw options on double-click.** A single click picks the Draw tool; a double click (on the button or the canvas) opens the Draw options panel (`draw-panel.tsx`), which has a **Main** and a **Shapes** tab. The Main tab departs from the source, which offers only 7 fixed colours, 4 fixed widths and a smoothing slider:
   - **Artist's colour wheel instead of the 7-colour palette.** A 200px hue ring, a saturation/value square in its centre, a hex field, Brightness and Saturation sliders, and a row of the last 8 colours, in `color-wheel.tsx`. The model is **HSV, not HSL**: "this blue, but darker" is a single multiply on value, whereas HSL lightness would desaturate towards white and black at once, so a pure hue could never be reached at full brightness. Stroke colours carry their alpha inline (`#rrggbbaa`), so the wheel edits the `#rrggbb` prefix and the opacity slider owns the alpha. Picking a hue while saturation is 0 (a fresh wheel starts on the grey `#4a4a4a`) lifts saturation to 1, because otherwise picking a hue on a grey does nothing visible.
   - **Width slider with an editable number instead of 4 buttons.** A `range` 1–64 plus a `number` field and a live thickness preview line, next to the source's five width groups (Finest / Correcto / Medio / Grande / Enorme ×4, 1–20). The number field keeps a draft string tagged with the width it came from, so it stays typeable (a value bound straight to `style.width` would snap back the instant the box is cleared) without a syncing effect.
@@ -196,13 +198,13 @@ docs/research/whiteboardfox/              page-brief.md, source.html, style.css,
                                           gallery-posts.json
 docs/design-references/                   source + local screenshots, comparison.png,
                                           board-draw-tools.png (marker + gradient fill)
-scripts/board-canvas-check.mjs            headless-Chrome canvas regression (27 checks)
+scripts/board-canvas-check.mjs            headless-Chrome canvas regression (30 checks)
 ```
 
 ## Checks run
 
 - `npm run check` — ESLint clean (0 errors, 0 warnings), `tsc --noEmit` clean, `next build` prerenders 8 static routes (`/`, `/pro`, `/account`, `/lobby`, `/options`, `/privacy`, `/terms`, `/_not-found`) plus the dynamic `/board/[id]`.
-- A headless-Chrome-over-CDP regression exercises the canvas end to end — buffer sizing, marker colour/width commits, the live preview, `Rellenar`, and the gradient settings (type radios, preview, stop rows, add/remove, position slider) with two-, three-stop, radial and repositioned ramps — asserting the resulting pixels. 27/27 green. Run it with `npm run dev` in one shell and `node scripts/board-canvas-check.mjs` in another.
+- A headless-Chrome-over-CDP regression exercises the canvas end to end — buffer sizing, marker colour/width commits, the live preview, `Rellenar`, and the gradient settings (type radios, preview, stop rows, add/remove, position slider) with two-, three-stop, radial and repositioned ramps — asserting the resulting pixels, plus the Select tool dragging a selected shape and never painting. 30/30 green. Run it with `npm run dev` in one shell and `node scripts/board-canvas-check.mjs` in another.
 - Layout compared numerically against the live page via the browser's computed styles.
 - Pixel diff of the source and clone at 1000×700 — residual differences are the empty ad column, the ad-driven vertical offset, font rasterisation, and thumbnail content.
 - Every interaction above was exercised in a real browser and its resulting DOM state asserted.
@@ -233,10 +235,12 @@ Each of these was measured from the canvas pixel buffer rather than eyeballed:
 | Gradient fill, three stops | With a third colour added, the same axis reads red → blue → green at 10%, 50% and 90% of the ramp; the new stop lands at 50% of the ramp and pushes the old last stop to the end. |
 | Gradient fill, radial | A radial ramp is centred on the shape's centroid: the middle of a 160×120 rectangle reads `rgb(253,0,1)` (the first colour) and its corner `rgb(23,0,232)` (the last). |
 | Gradient fill, stop position | Dragging the second stop to 25% of the ramp turns the axis fully blue after a quarter of its length, so a point 60% down reads `rgb(0,0,255)` while a point 10% down is still a red/blue blend `rgb(148,0,106)`. |
+| Select tool moves a shape | With the Select tool, a lasso around the green rectangle drew the coral selection box (910 coral pixels); dragging the shape 150px right emptied its old spot (`rgba(0,0,0,0)`) and filled the new one (`rgb(0,255,0)`). |
+| Select tool never paints | With *Relleno degradado* still active in the Draw panel and the Select tool picked, a lasso over an empty area left the region's pixel checksum untouched (`sum=2509251976`, `painted=948` before and after) — no shape was created. |
 | Lobby gate | With `wf_nickname` cleared, `/board/GATE-TEST-0001` renders the gate instead of the canvas and then redirects to `/lobby?from=board`, minting a fresh `WM-xxxx-xxxx` id. |
 | Participants row | Exactly 1 row: `Zorro (You)` at `23px` with `WM-A3F9-2C71` at `13.6px` directly beneath. |
 
 > Note for anyone re-running these: the browser harness keeps tabs `hidden`, and a hidden tab never fires `requestAnimationFrame`. The canvas repaints from rAF for continuous gestures (pan, in-progress lasso, live transforms), so those are only observable in a visible tab. Everything that repaints through a React state change — stroke commits, tool switches, zoom label, selection commits — is measurable regardless, which is how the table above was produced.
 >
-> The canvas assertions above were re-run against a headless Chrome driven over CDP, with `requestAnimationFrame` polyfilled to `setTimeout` via `Page.addScriptToEvaluateOnNewDocument` (headless Chrome does not drive rAF either). Pointer input goes through `Input.dispatchMouseEvent`, so the board sees trusted events and `setPointerCapture` works. The full regression is 27/27 green.
+> The canvas assertions above were re-run against a headless Chrome driven over CDP, with `requestAnimationFrame` polyfilled to `setTimeout` via `Page.addScriptToEvaluateOnNewDocument` (headless Chrome does not drive rAF either). Pointer input goes through `Input.dispatchMouseEvent`, so the board sees trusted events and `setPointerCapture` works. The full regression is 30/30 green.
 

@@ -35,7 +35,14 @@ import {
   type Viewport,
   type LassoPath,
 } from "@/lib/board/render";
-import type { Point, StrokeStyle, DrawStyle } from "@/lib/board/stroke";
+import {
+  applyTransform,
+  hitStroke,
+  pointInPolygon,
+  type Point,
+  type StrokeStyle,
+  type DrawStyle,
+} from "@/lib/board/stroke";
 
 /**
  * Whiteboard surface.
@@ -101,6 +108,9 @@ const DEFAULT_DRAW_STYLE: DrawStyle = "marker";
 const ERASE_TOLERANCE = 6;
 const ERASE_BRUSH_RADIUS = 12;
 
+/** Extra slack, in world units, when grabbing a selected stroke to move it. */
+const MOVE_TOLERANCE = 6;
+
 export function BoardSection({ boardId }: { boardId: string }) {
   const user = useDeviceUser();
   const pro = usePro();
@@ -145,7 +155,14 @@ export function BoardSection({ boardId }: { boardId: string }) {
     | { kind: "pan"; lastX: number; lastY: number }
     | { kind: "draw"; startTime: number; drawStyle: DrawStyle }
     | { kind: "erase" }
-    | { kind: "lasso" }
+    /**
+     * A lasso is either a selection or a fill, and the difference has to be
+     * remembered: the Draw tool's style can change between the press and the
+     * release, and the Select tool always selects, whatever the style says.
+     */
+    | { kind: "lasso"; fillType: "fill" | "gradient-fill" | null }
+    /** Dragging a selected stroke or shape, which moves the whole selection. */
+    | { kind: "move"; lastWorld: { x: number; y: number } }
     | {
         kind: "transform";
         handle: HandleId;
@@ -269,6 +286,14 @@ export function BoardSection({ boardId }: { boardId: string }) {
     return () => cancelAnimationFrame(frame);
   }, [paint]);
 
+  // Switching tools clears the hover cursor, which the inline style would
+  // otherwise keep showing over a canvas that no longer grabs anything.
+  useEffect(() => {
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = "";
+    }
+  }, [tool]);
+
   // Resize observer keeps the canvas viewport in sync.
   useEffect(() => {
     if (!canvasEl) return;
@@ -327,6 +352,39 @@ export function BoardSection({ boardId }: { boardId: string }) {
     return null;
   };
 
+  /**
+   * Whether a world point lands on the current selection.
+   *
+   * A selected stroke is grabbed by its ink, and a selected filled shape can
+   * be grabbed from anywhere inside it, since the fill is what the user sees.
+   */
+  const hitsSelection = (worldX: number, worldY: number): boolean => {
+    const selected = doc.selectedIds.current;
+    if (selected.size === 0) {
+      return false;
+    }
+    for (const stroke of doc.strokes.current) {
+      if (!selected.has(stroke.id)) {
+        continue;
+      }
+      if (hitStroke(stroke, worldX, worldY, MOVE_TOLERANCE)) {
+        return true;
+      }
+      if (
+        stroke.style.drawStyle === "fill" ||
+        stroke.style.drawStyle === "gradient-fill"
+      ) {
+        const polygon = stroke.points.map((point) =>
+          applyTransform(stroke.transform, point.x, point.y),
+        );
+        if (pointInPolygon(worldX, worldY, polygon)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
   const begin = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return;
     try {
@@ -368,8 +426,17 @@ export function BoardSection({ boardId }: { boardId: string }) {
           return;
         }
       }
+
+      // A press on the selection drags it around.
+      if (hitsSelection(world.x, world.y)) {
+        gesture.current = { kind: "move", lastWorld: world };
+        return;
+      }
+
+      // Anywhere else begins a lasso. The Select tool always selects, even
+      // when the Draw panel happens to be set to a fill style.
       lasso.current = { points: [world], done: false };
-      gesture.current = { kind: "lasso" };
+      gesture.current = { kind: "lasso", fillType: null };
       schedulePaint();
       return;
     }
@@ -391,7 +458,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
     // Fill / Gradient Fill: work like lasso - draw closed shape, then fill it.
     if (drawStyle === "fill" || drawStyle === "gradient-fill") {
       lasso.current = { points: [world], done: false };
-      gesture.current = { kind: "lasso" };
+      gesture.current = { kind: "lasso", fillType: drawStyle };
       schedulePaint();
       return;
     }
@@ -410,9 +477,36 @@ export function BoardSection({ boardId }: { boardId: string }) {
     schedulePaint();
   };
 
+  /**
+   * Cursor feedback while hovering with the Select tool.
+   *
+   * A selected stroke or shape shows a grab cursor, which is the hint that it
+   * can be dragged. The cursor is written straight to the element, so hovering
+   * never re-renders the board.
+   */
+  const updateHoverCursor = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    if (tool !== "select") {
+      if (canvas.style.cursor !== "") {
+        canvas.style.cursor = "";
+      }
+      return;
+    }
+    const screen = screenPosition(event);
+    const world = screenToWorld(camera.current, screen.x, screen.y);
+    const next = hitsSelection(world.x, world.y) ? "grab" : "";
+    if (canvas.style.cursor !== next) {
+      canvas.style.cursor = next;
+    }
+  };
+
   const extend = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const active = gesture.current;
     if (!active) {
+      updateHoverCursor(event);
       return;
     }
     const screen = screenPosition(event);
@@ -451,6 +545,19 @@ export function BoardSection({ boardId }: { boardId: string }) {
         done: false,
       };
       schedulePaint();
+      return;
+    }
+
+    if (active.kind === "move") {
+      // The selection follows the pointer, one increment at a time, so the
+      // strokes never drift away from the cursor.
+      const dx = world.x - active.lastWorld.x;
+      const dy = world.y - active.lastWorld.y;
+      active.lastWorld = world;
+      if (dx !== 0 || dy !== 0) {
+        doc.moveSelection(dx, dy, true);
+        schedulePaint();
+      }
       return;
     }
 
@@ -557,13 +664,20 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const finish = () => {
     const active = gesture.current;
     gesture.current = null;
+    // The selection may have moved away from the pointer, so the grab cursor
+    // is refreshed on the next move.
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = "";
+    }
 
     if (active?.kind === "lasso") {
       const path = lasso.current;
       lasso.current = null;
       if (path && path.points.length >= 3) {
-        if (drawStyle === "fill" || drawStyle === "gradient-fill") {
-          createFillStroke(path.points, drawStyle);
+        // The gesture remembers whether this lasso was meant to fill or to
+        // select, so the Select tool never paints a shape by accident.
+        if (active.fillType) {
+          createFillStroke(path.points, active.fillType);
         } else {
           doc.selectWithLasso(path.points);
         }
@@ -571,6 +685,12 @@ export function BoardSection({ boardId }: { boardId: string }) {
         doc.clearSelection();
       }
       schedulePaint();
+      return;
+    }
+
+    if (active?.kind === "move") {
+      // The live moves already mutated the document; commit one repaint.
+      doc.bump();
       return;
     }
 

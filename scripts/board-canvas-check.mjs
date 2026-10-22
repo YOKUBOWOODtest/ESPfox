@@ -273,6 +273,39 @@ async function main() {
       return { r: d[0], g: d[1], b: d[2], a: d[3] };
     })()`);
 
+  /** A checksum of a canvas region, so two snapshots can be compared. */
+  const regionHash = (x0, y0, x1, y1) =>
+    evaluate(`(() => {
+      const c = document.querySelector('[data-testid="boardCanvas"]');
+      const ctx = c.getContext('2d');
+      const d = ctx.getImageData(${x0}, ${y0}, ${x1 - x0}, ${y1 - y0}).data;
+      let sum = 0, painted = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        sum = (sum + (d[i] + d[i + 1] * 3 + d[i + 2] * 7 + d[i + 3] * 11) * ((i % 997) + 1)) >>> 0;
+        if (d[i + 3] > 0) painted++;
+      }
+      return { sum, painted };
+    })()`);
+
+  /**
+   * Counts the selection-box pixels in a region.
+   *
+   * The selection chrome is the brand coral `#e0533f`; the marker red
+   * `#ff0000` is close enough in hue but has no green in it, so the match is
+   * tightened around the coral's own green level.
+   */
+  const countSelection = (x0, y0, x1, y1) =>
+    evaluate(`(() => {
+      const c = document.querySelector('[data-testid="boardCanvas"]');
+      const ctx = c.getContext('2d');
+      const d = ctx.getImageData(${x0}, ${y0}, ${x1 - x0}, ${y1 - y0}).data;
+      let hits = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (Math.abs(d[i] - 224) < 30 && Math.abs(d[i + 1] - 83) < 25 && Math.abs(d[i + 2] - 63) < 25) hits++;
+      }
+      return hits;
+    })()`);
+
   const canvasX = (clientX) => clientX - geo.left;
   const canvasY = (clientY) => clientY - geo.top;
 
@@ -605,6 +638,96 @@ async function main() {
     "the ramp is still mixed near the start",
     early.r > 60 && early.b > 60,
     JSON.stringify(early),
+  );
+
+  // =========================================================================
+  // TEST 7 — the Select tool drags a selected shape
+  // =========================================================================
+  await evaluate(`document.querySelector('[data-testid="tool-select"]').click(); 'select'`);
+  await sleep(400);
+
+  // Lasso around the green rectangle painted in TEST 2.
+  await mouse("mousePressed", 270, 470, 1);
+  for (const [dx, dy] of [
+    [260, 0],
+    [260, 160],
+    [0, 160],
+  ]) {
+    await mouse("mouseMoved", 270 + dx, 470 + dy, 1);
+    await sleep(40);
+  }
+  await sleep(200);
+  await mouse("mouseReleased", 270, 630, 0);
+  await sleep(400);
+
+  const selectionPixels = await countSelection(
+    canvasX(280),
+    canvasY(460),
+    canvasX(520),
+    canvasY(640),
+  );
+  check(
+    "the Select tool lasso selects the shape",
+    selectionPixels > 0,
+    `selection pixels=${selectionPixels}`,
+  );
+
+  // Grab the shape by its body and drag it 150px to the right.
+  await mouse("mousePressed", 450, 540, 1);
+  for (let i = 1; i <= 8; i += 1) {
+    await mouse("mouseMoved", 450 + i * 18.75, 540, 1);
+    await sleep(40);
+  }
+  await sleep(200);
+  await mouse("mouseReleased", 600, 540, 0);
+  await sleep(500);
+
+  const oldSpot = await sampleAt(canvasX(450), canvasY(540));
+  const newSpot = await sampleAt(canvasX(600), canvasY(540));
+  console.log("move samples:", JSON.stringify({ oldSpot, newSpot }));
+  check(
+    "dragging a selected shape moves it",
+    oldSpot.g < 120 && newSpot.g > 150 && newSpot.r < 100 && newSpot.b < 100,
+    JSON.stringify({ oldSpot, newSpot }),
+  );
+
+  // =========================================================================
+  // TEST 8 — the Select tool never paints, even with a fill style active
+  // =========================================================================
+  await openPanel();
+  await pickStyle("Relleno degradado");
+  await closePanel();
+  await evaluate(`document.querySelector('[data-testid="tool-select"]').click(); 'select'`);
+  await sleep(400);
+
+  const before = await regionHash(
+    canvasX(1000),
+    canvasY(750),
+    canvasX(1160),
+    canvasY(870),
+  );
+  await mouse("mousePressed", 1000, 750, 1);
+  for (const [dx, dy] of [
+    [160, 0],
+    [160, 120],
+    [0, 120],
+  ]) {
+    await mouse("mouseMoved", 1000 + dx, 750 + dy, 1);
+    await sleep(40);
+  }
+  await sleep(200);
+  await mouse("mouseReleased", 1000, 870, 0);
+  await sleep(500);
+  const after = await regionHash(
+    canvasX(1000),
+    canvasY(750),
+    canvasX(1160),
+    canvasY(870),
+  );
+  check(
+    "the Select tool lasso paints no shape",
+    after.sum === before.sum && after.painted === before.painted,
+    JSON.stringify({ before, after }),
   );
 
   // =========================================================================
