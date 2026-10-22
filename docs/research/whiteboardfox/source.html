@@ -1,0 +1,1114 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+	    <meta name="mobile-web-app-capable" content="yes" />
+	    <meta name="apple-mobile-web-app-capable" content="yes" />
+	    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+		<title>Simple Online Whiteboard - Whiteboard Fox</title>
+		<meta content='text/html' http-equiv='Content-Type' />
+		<meta name="google-site-verification" content="FE8cBulH1WLyw4TjchpImuHI_FMqNbOTtc63itR-86o" />
+		<meta name="description" content="Whiteboard Fox is a simple online whiteboard that allows you to collaborate with others in real time. Share your ideas, brainstorm with your team, and take notes all in one place. Whiteboard Fox is easy to use, and it's free to get started."/>
+		<meta property="og:title" content="Simple Online Whiteboard - Whiteboard Fox" />
+
+        <meta property="og:description" content="Whiteboard Fox is a simple online whiteboard that allows you to collaborate with others in real time." />
+        <meta property="og:image" content="https://whiteboardfox.com/images/cogs.jpg"/>
+
+        <meta name="twitter:card" content="Share your ideas, brainstorm with your team, and take notes all in one place. Whiteboard Fox is easy to use, and it's free to get started."/>
+        <meta name="twitter:title" content="Simple Online Whiteboard - Whiteboard Fox"/>
+        <meta name="twitter:description" content="Whiteboard Fox is a simple online whiteboard that allows you to collaborate with others in real time." />
+        <meta name="twitter:image" content="https://whiteboardfox.com/images/cogs.jpg"/>
+
+		<link href="style.css" rel="Stylesheet" type="text/css" />
+		<link href="/output.css" rel="stylesheet" type="text/css" />
+
+
+<link href='https://fonts.googleapis.com/css?family=Hammersmith+One|Roboto:100,300' rel='stylesheet' type='text/css'>
+<link rel="shortcut icon" href="images/icon.png" />
+
+
+	<!-- The core Firebase JS SDK is always required and must be listed first -->
+	<script src="https://www.gstatic.com/firebasejs/7.19.1/firebase-app.js"></script>
+
+	<!-- Add SDKs for Firebase products that you want to use
+	https://firebase.google.com/docs/web/setup#available-libraries -->
+	<script src="https://www.gstatic.com/firebasejs/7.19.1/firebase-auth.js"></script>
+
+	<script src="https://cdn.firebase.com/libs/firebaseui/3.5.2/firebaseui.js"></script>
+	<link type="text/css" rel="stylesheet" href="https://cdn.firebase.com/libs/firebaseui/3.5.2/firebaseui.css" />
+    <script async src="https://cdn.fuseplatform.net/publift/tags/2/3299/fuse.js"></script>
+<script>
+
+
+	
+
+  
+
+function createCookie(name,value,days) {
+	if (days) {
+		var date = new Date();
+		date.setTime(date.getTime()+(days*24*60*60*1000));
+		var expires = "; expires="+date.toGMTString();
+	}
+	else var expires = "";
+	
+	document.cookie = name+"="+value+expires+"; path=/; domain=whiteboardfox.com";
+}
+
+function readCookie(name) {
+	var nameEQ = name + "=";
+	var ca = document.cookie.split(';');
+	for(var i=0;i < ca.length;i++) {
+		var c = ca[i];
+		while (c.charAt(0)==' ') c = c.substring(1,c.length);
+		if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length,c.length);
+	}
+	return null;
+}
+function redirectToBusinessIfNeeded() {
+  const hasVisitedBusiness = localStorage.getItem('visited_pro_business') === 'true';
+
+  const currentPath = window.location.pathname;
+
+  // Not allowed to see following pages if user has visited business page
+  const redirectPaths = ['/', '/pricing.jsp', '/lobby.jsp'];
+
+  if (hasVisitedBusiness && redirectPaths.includes(currentPath)) {
+    window.location.href = '/business.jsp';
+  }
+}
+redirectToBusinessIfNeeded();
+
+// http://stackoverflow.com/questions/1822350/what-is-the-javascript-operator-and-how-do-you-use-it
+if (readCookie("bid") == null) {
+	if("en_US".toLowerCase().includes("en") && Math.floor(Math.random() * 100) % 2 == 0) {
+		createCookie("user_type", "NA", 365);
+	}
+	var v = "";
+	for (var i = 0; i < 18; i++) {
+		v = v + ((Math.random() * 10) >> 0);
+	} 
+	createCookie("bid", v, 365 * 2);
+}
+
+</script>
+        <!-- Google tag (gtag.js) -->
+        <script async src="https://www.googletagmanager.com/gtag/js?id=G-1D9TC6VV9C"></script>
+        <script>
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+
+          gtag('config', 'G-1D9TC6VV9C');
+        </script>
+	</head>
+
+	<body style="height:100%;background-color:white;font-family:Roboto, sans-serif;font-size:20px;font-weight:300;color:#233f98;">
+	
+
+
+
+
+<div id="banner-container" class="top-0 z-50">
+</div>
+<template id="invite-banner-template">
+	<div id="invite-banner" class="bg-[#243f98] text-white shadow-md p-2.5">
+		<div class="flex justify-center items-center gap-2 max-w-5xl mx-auto text-sm">
+		  <div id="avatar-container" class="w-8 h-8"></div>
+		  <p class="text-xs" id="invite-msg"></p>
+		  <a target="_blank" class="flex gap-2 bg-white/75 p-2 text-black rounded text-xs text-center" id="join-invite-link">Join now</a>
+		</div>
+	</div>
+</template>
+<script>
+  async function addInvitationBannerIfAvailable() {
+	let invitation = await getInvitation();
+	let inviteBannerTemplate  = document.getElementById("invite-banner-template").content;
+    let inviteBannerDiv = inviteBannerTemplate.cloneNode(true);
+    if(invitation.isSuspended) {
+        inviteBannerDiv.querySelector("#invite-msg").innerHTML = "Your account has been suspended. Please contact support for more information.";
+        inviteBannerDiv.querySelector("#join-invite-link").setAttribute("href", "/profile.jsp" );
+        inviteBannerDiv.querySelector("#join-invite-link").innerText = "Contact Support";
+        inviteBannerDiv.querySelector("#invite-banner").style.background = "#cb0000";
+        document.querySelector("#banner-container").appendChild(inviteBannerDiv);
+        return;
+    }
+    if (invitation.inviteType == "GALLERY") {
+        inviteBannerDiv.querySelector("#invite-msg").innerHTML = "Check out posts from the whiteboard you participated in!";
+        inviteBannerDiv.querySelector("#join-invite-link").setAttribute("href", "/gallery/wb." + invitation.diagramName);
+        inviteBannerDiv.querySelector("#join-invite-link").innerHTML = "View Gallery";
+        inviteBannerDiv.querySelector("#invite-banner").style.background = "#494949";
+    } else {
+        if(invitation.userName == undefined) {
+            return;
+        }
+        inviteBannerDiv.querySelector("#invite-msg").innerHTML = getTranslatedInviteMsg(invitation.userName);
+        inviteBannerDiv.querySelector("#avatar-container").innerHTML = invitation.userAvatar;
+        inviteBannerDiv.querySelector("#join-invite-link").setAttribute("href", "/" + invitation.diagramName);
+    }
+    document.querySelector("#banner-container").appendChild(inviteBannerDiv);
+    setTimeout(() => {
+	    document.querySelector("#invite-banner").style.display = "none"
+    }, 120000);
+  }
+
+  function getTranslatedInviteMsg(userName) {
+    let msg = `##placeholder## invited you to join their whiteboard`;
+    return msg.replace("##placeholder##", `<a class="underline" href="/gallery/${userName}">${userName}</a>`);
+  }
+  async function getInvitation() {
+    let response = await fetch('/api/getInvitation', {
+        method: "GET"
+    });
+    let data = await response.json();
+    return data;
+  }
+  document.addEventListener("DOMContentLoaded", (event) => {
+    addInvitationBannerIfAvailable();
+  });
+
+</script>
+	<div style="min-height: 100vh;display: flex;flex-direction:column;">
+	<div style="background-color:#eeeeee;width:100%">
+		<div style="width:1010px;height:100%;margin: 0 auto;background-color:#eeeeee">
+			<div style="background-color:#eeeeee;padding:50px;padding:20px 50px 10px 50px;display: flex;align-items: center;justify-content: space-between">
+				<a href="/"
+				   style="font-size:32px;font-weight:300;font-family:'Hammersmith One', sans-serif;word-spacing:-8px;color:#233f98;text-decoration: none;display: flex; align-items: center;">
+				   <img	src="images/icon.png" width="64" height="64" style="padding-right:3px;vertical-align:middle;"/>
+				   Whiteboard Fox
+		        </a>
+
+				<div style="flex-grow:1"></div>
+				
+                <a
+                    href="/lobby.jsp"
+                    style="margin-right: 20px;"
+                    class="mainLink"
+                    >Lobby</a>
+				<a href="pricing.jsp" class="mainLink">Pricing</a>
+				<div style="width:20px"></div>
+                
+	              <a href="login.jsp" class="mainLink">Sign In</a>
+                
+				
+
+			</div>
+        </div>
+	</div>
+  
+        
+    <div style="background-color:white;width:100%">
+
+
+	  
+
+
+<script>(function(d, s, id) {
+  var js, fjs = d.getElementsByTagName(s)[0];
+  if (d.getElementById(id)) return;
+  js = d.createElement(s); js.id = id;
+  js.src = "//connect.facebook.net/en_US/sdk.js#xfbml=1&appId=1441078679505536&version=v2.0";
+  fjs.parentNode.insertBefore(js, fjs);
+}(document, 'script', 'facebook-jssdk'));</script>
+
+<script type="text/javascript">
+function showOptions() {
+    document.getElementById('optionsEl').style.visibility = 'visible';
+}
+function hideOptions() {
+    document.getElementById('optionsEl').style.visibility = 'hidden';
+}
+
+
+function goToId() {
+	location = 'https://whiteboardfox.com/'+document.getElementById('textbox_id').value.replace(/ /g,'');
+}
+function resetFormUI() {
+    document.getElementById('form-container').style.display = 'block';
+    document.getElementById('createWhiteboardFormActions').style.display = 'block';
+    document.getElementById('spinner-container-optionsEl').style.display = 'none';
+}
+window.addEventListener('pageshow', resetFormUI);
+
+function doSubmitForm() {
+
+	let formData = new FormData(document.querySelector("#createWhiteboardForm"));
+
+    let notifyFollowers = inviteesCheck.checked && inviteesSelect.value === "NOTIFY_FOLLOWERS";
+    let allowAnyone = inviteesCheck.checked && inviteesSelect.value === "ALLOW_ANYONE";
+    let allowProUsers = inviteesCheck.checked && inviteesSelect.value === "ALLOW_PRO_USERS";
+
+	if((notifyFollowers && true) || (allowAnyone && true) || (allowProUsers && true)) {
+		window.alert('You need to be logged-in in order to notify your followers');
+		return;
+	}
+	if((formData.get("broadcast") == "false" && notifyFollowers) || (formData.get("broadcast") == "false" && allowAnyone)
+	    || (formData.get("broadcast") == "false" && allowProUsers)) {
+		window.alert('You can not invite your followers to whiteboards where other participants can draw and erase anything');s
+		return;
+	}
+	let hasValidSubscription = false;
+	if (allowProUsers && !hasValidSubscription) {
+        window.alert('You need to have an active subscription to allow Pro users to join your whiteboard.');
+        return;
+    }
+    document.getElementById('form-container').style.display = 'none';
+    document.getElementById('createWhiteboardFormActions').style.display = 'none';
+    document.getElementById('spinner-container-optionsEl').style.display = 'block';
+	document.createWhiteboardForm.submit();
+	return false;
+}
+
+function onVisibilityUpdate(event) {
+    public_text = 'Snapshots of Public whiteboards are visible to anyone - eg. on your public profile page This whiteboard will expire in 14 days.';
+    private_text = 'Invite-Only whiteboards can only be viewed by participants with the whiteboard ID or link. This whiteboard will expire in 14 days.';
+    if (event.target.value == "private") {
+        document.getElementById('visibility_help').innerHTML = private_text;
+    } else {
+        document.getElementById('visibility_help').innerHTML = public_text;
+    }
+}
+
+function saveFunCookieAndShowOptions() {
+	createCookie("user_type", "fun", 30);
+	sendUserGroupChosenEvent("fun");
+	document.getElementById("createWhiteboardForm").style.display = "block";
+	document.getElementById("createWhiteboardFormActions").style.display = "block";
+	document.querySelector(".user-type-query-container").style.display = "none";
+}
+
+function saveWorkCookieAndCreateWhiteboard() {
+	createCookie("user_type", "work", 30);
+	sendUserGroupChosenEvent("work");
+	window.location = "/diagramName?copyLimited=false&broadcast=false&expiry=14";
+}
+
+async function sendUserGroupChosenEvent(userType){
+      let formData = new FormData();
+      formData.append("eventType", "user_type_chosen");
+      formData.append("userType", userType);
+      let resp = await fetch("saveException", {
+          method: "PUT",
+          body: formData
+      });
+  }
+
+</script>
+<style>
+img {
+    display: inline;
+}
+.user-type-query-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+.user-type-choice {
+	padding: 30px 20px 30px 20px;
+    border: 1px solid;
+    border-radius: 4px;
+    margin: 12px 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+}
+
+.user-type-choice:hover {
+    background-color: #243f98;
+    color: white;
+}
+
+#spinner-container-optionsEl {
+    margin-top: 20px;
+    padding: 20px 40px;
+    background: white;
+}
+#spinner-optionsEl {
+  display: inline-block;
+  width: 50px;
+  height: 50px;
+  border: 5px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  border-top-color:#5271bb;
+  animation: spin 1s ease-in-out infinite;
+  margin-bottom: 20px;
+}
+
+@keyframes spin {
+  to {
+      transform: rotate(360deg);
+  }
+}
+</style>
+	  <div style="background-color:white;padding-top:0">
+		<div style="width:1010px;height:100%;margin: 0 auto;">
+
+
+	<div style="padding:0 0 10px 50px;display: grid;grid-template-columns: 1fr 1fr;grid-gap: 20px;">
+
+			<div id="left-container">
+			    <div style="padding-left:23px;">
+
+            			</div>
+            			<div style="padding-left:100px;">
+            				<div id="optionsEl" style="visibility:hidden;width:480px;z-index:100;position:absolute;background-color:#eeeeee;padding:10px;box-shadow: 5px 5px 30px #333333;">
+            					<div>
+            						Options
+            						<div style="float:right">
+            						<a href="#" onclick="hideOptions();return false;"><img src="images/close-button.png" width=24 height=24></a>
+            						</div>
+            					</div>
+            					<div id="spinner-container-optionsEl" style="display: none; margin-top: 20px;">
+                                  <div id="spinner-optionsEl"></div>
+                                  <p>Creating whiteboard...</p>
+                                </div>
+                                <div id="form-container">
+            					<div style="line-height:160%;font-family:Roboto;background-color:white;margin-top:3px;padding:20px 20px 20px 40px;">
+								    <div style="display: none" class="user-type-query-container">
+								      <p>How will you use Whiteboard Fox?</p>
+								      <button class="user-type-choice" onclick="saveFunCookieAndShowOptions()">
+								        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6">
+                                          <path stroke-linecap="round" stroke-linejoin="round" d="M9.53 16.122a3 3 0 0 0-5.78 1.128 2.25 2.25 0 0 1-2.4 2.245 4.5 4.5 0 0 0 8.4-2.245c0-.399-.078-.78-.22-1.128Zm0 0a15.998 15.998 0 0 0 3.388-1.62m-5.043-.025a15.994 15.994 0 0 1 1.622-3.395m3.42 3.42a15.995 15.995 0 0 0 4.764-4.648l3.876-5.814a1.151 1.151 0 0 0-1.597-1.597L14.146 6.32a15.996 15.996 0 0 0-4.649 4.763m3.42 3.42a6.776 6.776 0 0 0-3.42-3.42" />
+                                        </svg>
+								        I'm Drawing for Fun
+							          </button>
+								      <button class="user-type-choice" onclick="saveWorkCookieAndCreateWhiteboard()">
+								        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6">
+                                          <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
+                                        </svg>
+								        I'm Drawing for Work
+							          </button>
+								    </div>
+            						<form action="diagramName" method="GET" name="createWhiteboardForm" id="createWhiteboardForm">
+            						<input type="hidden" name="copyLimited" id="copyLimited" value="false">
+            						<input type="hidden" name="force-auth-participants" id="force-auth-participants" value="false">
+            						Other participants can:
+            							<br/>
+            							<table>
+            							<tr>
+                                            <td style="padding-right:10px;padding-top:5px">
+                                                <input type="radio" id="editLimited" name="broadcast" value="editLimited" checked="checked">
+                                            </td>
+                                            <td style="padding-top:5px">
+                                                <div>
+                                                <label for="editLimited">Draw and erase their own drawing</label>
+                                                </div>
+                                            </td>
+                                        </tr>
+            							<tr>
+                                            <td style="padding-right:10px;padding-top:5px">
+                                              <input type="radio" id="editFull" name="broadcast" value="false"/>
+                                          </td>
+                                          <td style="padding-top:5px">
+                                              <div>
+                                              <label for="editFull">Draw and erase anything</label>
+                                              </div>
+                                          </td>
+                                        </tr>
+            							<tr>
+            								<td  style="padding-top:5px;">
+            									<input type="radio" id="broadcast" name="broadcast" value="true">
+            								</td>
+            								<td  style="padding-top:5px">
+            									<div>
+            									<label for="broadcast">Only view my drawing</label>
+            									</div>
+            								</td>
+            							</tr>
+            							</table>
+
+                                        <div class="flex items-center" style="margin: 20px 0;">
+                                            <div style="padding-right: 10px;">
+                                                <input name="invitees-check" id="invitees-check" type="checkbox" value="NOTIFY_FOLLOWERS"/>
+                                            </div>
+                                            <span style="margin-right: 8px;">Invite</span>
+                                            <select id="invitees-select" style="border-radius: 5px;border: 1px solid #3f3ea9;padding: 3px;font-size: 18px;color: #3f3ea9;font-weight: 300;font-family: Roboto, sans-serif;">
+                                                <option value="NOTIFY_FOLLOWERS" selected>
+                                                    my followers
+                                                </option>
+                                                <option value="ALLOW_ANYONE">
+                                                    anyone
+                                                </option>
+                                            </select>
+                                            <span style="margin-left: 8px;">to join</span>
+                                        </div>
+                                        <input type="hidden" id="expiry" name="expiry" value="14" />
+                                        <p style="display:none; font-size:14px;" id="copyLimited-msg">Copy and image upload for participants will be disabled</p>
+            						</form>
+            						</div>
+            					</div>
+								<div>
+								</div>
+
+
+            					<div style="height:60px;background-color:white;height:50px;padding:0px 20px 0px 10px;" id="createWhiteboardFormActions">
+            						<div style="float:right">
+            							<a href="options.jsp" style="text-decoration: none;border: 0;text-align: center;
+            					font-family:Roboto;font-size:22px;font-weight:300;
+            				background-color:#eeeeee;color:#233f98;border-radius:5px;padding:10px 20px 10px 20px">More Options</a>
+
+            							<a id="submitFormButton" href="#" onclick="return doSubmitForm();" style="text-decoration: none;border: 0;text-align: center;
+            					font-family:Roboto;font-size:22px;font-weight:300;
+            				background-color:#ff6a00;color:white;border-radius:5px;padding:10px 20px 10px 20px">Create Whiteboard</a>
+            						</div>
+
+            					</div>
+
+            				</div>
+            			</div>
+            			<h1 style="padding:60px 0 10px 0;font-size:58px;font-weight:100">Simple Online<br>Whiteboard<br></h1>
+
+            			<div style="line-height:160%">
+            				Share a virtual whiteboard in real-time<br/>
+            				using any modern web browser
+            			</div>
+            			<div style="margin-top:40px;margin-bottom:40px">
+            			<a rel="nofollow" href="#" onclick="showOptions();return false;" style="text-decoration: none;border: 0;text-align: center;
+            				font-family:Roboto;font-size:28px;font-weight:300;
+            			background-color:#ff6a00;color:white;border-radius:5px;padding:15px 80px 15px 80px" id="startDrawingButton">
+            			Start Drawing&nbsp;&nbsp;<img src="images/go.png" style="vertical-align:middle"/>
+            			</a>
+
+            			</div>
+
+
+            <div style="font-family:Roboto;font-size:16px;padding-bottom:5px;line-height:140%">
+             Or enter a Whiteboard ID: <input style="border: 1px solid #233f98;padding:2px 4px;border-radius:5px; font-size: 14px" id="textbox_id" type="text" placeholder="eg. 34567-8901-2345"/> <button onclick="goToId()" style="background: #efefef;border: 1px solid #233f98;padding:5px;border-radius:5px">Go</button>
+            </div>
+
+			</div>
+			<div style="background-color: #FCFCFC;display: flex;justify-content: center;align-items: center;">
+                    
+                        <div style="padding:20px 0 20px 0">
+                            <!-- GAM 71161633/SBSLF_whiteboardfox/mrec_1 -->
+                            <div id="home-ad" data-fuse="22970017876"></div>
+                        </div>
+            		
+            		
+
+            	</div>
+			</div>
+	  </div>
+	</div>
+	<div style="width:1010px;height:100%;margin: 0 auto; padding:0 50px 10px 50px;">
+
+        <ul class="w-full text-center sm:flex my-6 text-gray-700">
+            <li id="top-posts-tab" class="w-full focus-within:z-10">
+                <button class="inline-block w-full p-4 border-b-2 border-[#5272bc] text-[#5272bc]">Top Posts</button>
+            </li>
+            <li id="followers-posts-tab" class="w-full focus-within:z-10">
+                <button class="inline-block w-full p-4 border-b-2 border-gray-200">Following</button>
+            </li>
+        </ul>
+
+        <div id="top-posts-gallery" class="w-full">
+            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script src="/gallery-common-utils.js"></script>
+
+<script>
+    window.API_BASE_PATH='';
+</script>
+
+<script>
+    window.REPORT_POST_LABELS = {
+        title: 'Report Post',
+        selectReason: 'Select a reason',
+        nsfw: 'Nudity or sexual content',
+        abuse: 'Harassment, hate or abuse',
+        spam: 'Spam',
+        other: 'Other',
+        depictsMinor: 'Includes depiction of a minor',
+        detailsPlaceholder: 'Tell us more (optional)',
+        cancel: 'Cancel',
+        submit: 'Submit Report'
+    };
+</script>
+
+
+    <script src="/snapshotUtils.js"></script>
+
+
+<style>
+    .progress {
+      animation: progress 1s infinite linear;
+    }
+
+    .left-right {
+        transform-origin: 0% 50%;
+    }
+        @keyframes progress {
+        0% {
+            transform:  translateX(0) scaleX(0);
+        }
+        40% {
+            transform:  translateX(0) scaleX(0.4);
+        }
+        100% {
+            transform:  translateX(100%) scaleX(0.5);
+        }
+    }
+    .aspect-ratio-600-315 {
+        position: relative;
+        width: 100%;
+        padding-top: 52.5%; /* Aspect Ratio (height / width) * 100% */
+    }
+    .avatar-container svg, .avatar-container img{
+		width: 4rem;
+		height: 4rem;
+    }
+    .avatar-container .blockStatusIcon{
+		width: 30px;
+		height: 30px;
+		position: absolute;
+		right: 0;
+		bottom: 0;
+    }
+
+</style>
+    <div style="background-color: white; padding-top: 0" class="max-w-5xl mx-auto flex justify-between w-full flex-wrap gap-4">
+        <div class="h-1.5 w-full bg-[#eeeeee] overflow-hidden fixed top-0 left-0 right-0 z-10" id="loading-bar">
+            <div class="progress w-full h-full bg-[#233f98] left-right"></div>
+        </div>
+        <div class="px-4 pb-2 lg:px-0 flex-grow min-w-0">
+            <div id="posts-container"
+                class="flex items-stretch flex-wrap p-6 rounded-lg gap-6 ring-1 ring-gray-900/10 bg-gray-100">
+            </div>
+            <div id="pagination-container" class="flex w-full justify-between items-center mt-8">
+                <div class="text-sm font-medium text-gray-900 flex items-center">
+                    <select
+                        id="paginate-select"
+                        class="mr-3 px-3 py-2 text-xs font-medium text-gray-900 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:ring-4 focus:outline-none focus:ring-blue-600"
+                        aria-label="Page"
+                        style="margin-right: 12px"
+                    >
+                    </select>
+                    <span id="currPage-span"></span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button id="paginate-previous" type="button"
+                        class="disabled:opacity-50 disabled:pointer-events-none px-3 py-2 text-xs font-medium text-center text-black bg-gray-200 rounded-md hover:bg-gray-300 focus:ring-4 focus:outline-none focus:ring-blue-600">
+                        Previous
+                    </button>
+                    <button id="paginate-next" type="button"
+                        class="disabled:opacity-50 disabled:pointer-events-none px-3 py-2 text-xs font-medium text-center text-black bg-gray-200 rounded-md hover:bg-gray-300 focus:ring-4 focus:outline-none focus:ring-blue-600">
+                        Next
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <template id="post-template">
+            <div
+                class="post-div overflow-hidden flex flex-col items-start h-full rounded-md shadow bg-white border border-solid border-gray-200 relative w-full sm:w-[calc(50%-1rem)] md:w-[calc(33.33%-1rem)] h-full">
+                <a class="post-image-anchor aspect-ratio-600-315" target="_blank" rel="noopener noreferrer">
+                    <img onerror="reportImgLoadError(event, this);" class="post-image absolute inset-0 w-full object-cover overflow-hidden" alt="Post Thumbnail" />
+                </a>
+                <div class="post-pin w-6 h-6 absolute top-0 left-0 items-center justify-center mt-2 ml-2">
+                    <svg width="800px" height="800px" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="#808080"
+                        class="bi bi-pin-fill w-5 h-5">
+                        <path
+                            d="M4.146.146A.5.5 0 0 1 4.5 0h7a.5.5 0 0 1 .5.5c0 .68-.342 1.174-.646 1.479-.126.125-.25.224-.354.298v4.431l.078.048c.203.127.476.314.751.555C12.36 7.775 13 8.527 13 9.5a.5.5 0 0 1-.5.5h-4v4.5c0 .276-.224 1.5-.5 1.5s-.5-1.224-.5-1.5V10h-4a.5.5 0 0 1-.5-.5c0-.973.64-1.725 1.17-2.189A5.921 5.921 0 0 1 5 6.708V2.277a2.77 2.77 0 0 1-.354-.298C4.342 1.674 4 1.179 4 .5a.5.5 0 0 1 .146-.354z" />
+                    </svg>
+                </div>
+
+                        <div class="dropdown absolute top-0 right-0 mt-2 mr-2 justify-end flex z-10">
+                            <div class="relative">
+                                <button class="dropdown-toggle text-gray-600 focus:outline-none">
+                                    <div class="w-12 h-6 flex items-center justify-end">
+                                        <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="#808080"
+                                            class="bi bi-three-dots-vertical w-5 h-5">
+                                            <path
+                                                d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z" />
+                                        </svg>
+                                    </div>
+                                </button>
+                                <div
+                                    class="dropdown-menu absolute hidden right-0 top-6 w-48 bg-white rounded overflow-hidden shadow z-10 border border-solid border-gray-200">
+                                    
+                                        
+                                        
+                                            <div tabindex="0"
+                                                class="report-btn block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer flex gap-2 items-center">
+                                                    <svg width="800px" height="800px" viewBox="0 0 24 24" fill="none" class="bi bi-pin-fill w-4 h-4"
+                                                     xmlns="http://www.w3.org/2000/svg">
+                                                    <path d="M12 10V13" stroke="#323232" stroke-width="2" stroke-linecap="round"/>
+                                                    <path d="M12 16V15.9888" stroke="#323232" stroke-width="2" stroke-linecap="round"/>
+                                                    <path d="M10.2518 5.147L3.6508 17.0287C2.91021 18.3618 3.87415 20 5.39912 20H18.6011C20.126 20 21.09 18.3618 20.3494 17.0287L13.7484 5.147C12.9864 3.77538 11.0138 3.77538 10.2518 5.147Z" stroke="#323232" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                                    </svg>
+                                                <span>Report NSFW</span>
+                                            </div>
+                                        
+                                    
+                                </div>
+                            </div>
+                        </div>
+
+                <div class="w-full p-2 flex flex-start items-center relative z-10">
+                    <span class="hidden play-icon mr-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
+                        </svg>
+                    </span>
+                    <p class="post-description truncate text-sm flex-1"></p>
+                    <span class="flex items-center gap-1 justify-end">
+                        <span id="is-editor-pick" class="mr-1" title="Editor's Choice">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" class="w-6 h-6" fill="currentColor">
+                              <path d="M341.9 38.1C328.5 29.9 311.6 29.9 298.2 38.1C273.8 53 258.7 57 230.1 56.4C214.4 56 199.8 64.5 192.2 78.3C178.5 103.4 167.4 114.5 142.3 128.2C128.5 135.7 120.1 150.4 120.4 166.1C121.1 194.7 117 209.8 102.1 234.2C93.9 247.6 93.9 264.5 102.1 277.9C117 302.3 121 317.4 120.4 346C120 361.7 128.5 376.3 142.3 383.9C164.4 396 175.6 406 187.4 425.4L138.7 522.5C132.8 534.4 137.6 548.8 149.4 554.7L235.4 597.7C246.9 603.4 260.9 599.1 267.1 587.9L319.9 492.8L372.7 587.9C378.9 599.1 392.9 603.5 404.4 597.7L490.4 554.7C502.3 548.8 507.1 534.4 501.1 522.5L452.5 425.3C464.2 405.9 475.5 395.9 497.6 383.8C511.4 376.3 519.8 361.6 519.5 345.9C518.8 317.3 522.9 302.2 537.8 277.8C546 264.4 546 247.5 537.8 234.1C522.9 209.7 518.9 194.6 519.5 166C519.9 150.3 511.4 135.7 497.6 128.1C472.5 114.4 461.4 103.3 447.7 78.2C440.2 64.4 425.5 56 409.8 56.3C381.2 57 366.1 52.9 341.7 38zM320 160C373 160 416 203 416 256C416 309 373 352 320 352C267 352 224 309 224 256C224 203 267 160 320 160z" />
+                            </svg>
+                        </span>
+                        <button class="post-toggle-like-btn heart-btn disabled:opacity-70 cursor-pointer">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke-width="1.5"
+                                class="heart-svg w-6 h-6 text-slate-500 hover:text-slate-900 ease-in cursor-pointer">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+                            </svg>
+                        </button>
+                        <span class="post-like-count text-xs"></span>
+                    </span>
+                </div>
+
+                
+
+            </div>
+        </template>
+
+<script>
+    (function() {
+    let canEdit = false;
+    let isLoggedIn = false;
+    let currPage;
+    let defaultPageSize = 12;
+
+    let loadingBar = document.getElementById('loading-bar');
+    loadingBar.style.display = 'none';
+    let thinking = false;
+
+    function setThinking(isThinking) {
+        thinking = isThinking;
+        loadingBar.style.display = isThinking ? 'block' : 'none';
+    }
+
+    let postsContainer = document.getElementById('posts-container');
+    let paginateNext = document.getElementById('paginate-next');
+    let paginatePrev = document.getElementById('paginate-previous');
+    let paginateSelect = document.getElementById('paginate-select');
+    let currPageSpan = document.getElementById('currPage-span');
+    let paginationContainer = document.getElementById('pagination-container');
+    paginationContainer.style.display = 'none';
+
+    paginateSelect.addEventListener('change', function() {
+        getAndRenderPosts(parseInt(this.value, 10));
+    });
+    paginateNext.addEventListener('click', (e) => getAndRenderPosts(currPage + 1));
+    paginatePrev.addEventListener('click', (e) => getAndRenderPosts(currPage - 1));
+
+    const timeout = (ms) =>
+        new Promise((resolve, reject) => {
+            setTimeout(() => reject(new Error('Request timed out')), ms);
+        });
+
+    const fetchWithTimeout = async (url, options, timeoutDuration = 20000) => {
+        return Promise.race([fetch(url, options), timeout(timeoutDuration)]);
+    }
+
+    async function getAndRenderPosts(pageNumber) {
+       if (thinking) {
+            return;
+       }
+       await apiThinkingAction(
+            `/api/gallery-posts?page=${pageNumber}&type=TOP`,
+            'GET',
+            null,
+            async (resp) => {
+                let data = await resp.json();
+                let posts = data.posts;
+                let totalCount = data.totalCount;
+
+                if (totalCount === 0) {
+                    showPostsNotAvailableMessage(false ? `You are not following any users`: `No snapshots found.`);
+                    return;
+                }
+
+                let pageSize = posts.length || defaultPageSize;
+                let lastPage = pageSize > 0 ? Math.ceil(totalCount / pageSize) : 1;
+
+
+                if (posts.length === 0) {
+                   await getAndRenderPosts(lastPage);
+                } else {
+                    currPage = pageNumber;
+                    updatePaginationState(`Page ${currPage} of ${lastPage}`, currPage === lastPage, currPage === 1, lastPage, currPage);
+                    renderPosts(posts);
+                }
+            },
+            (error) => {
+                // TODO show toast
+                console.log('API Error: ', error);
+                showPostsNotAvailableMessage(`Something went wrong. Please refresh and try again.`);
+            },
+            setThinking
+        );
+    }
+
+    function renderPosts(posts) {
+        clearPostsContainer();
+
+        let postTemplate = document.getElementById("post-template").content;
+
+        for (let doc of posts) {
+            let id = doc._id;
+            let postFileName = doc.postFileName
+            let isEditorPick = doc.isEditorPick;
+            let updatedPostId = postFileName || id;
+            let thumbnailUrl = 'https://s1.whiteboardfox.com/sendGalleryPostThumbnail?file=' + updatedPostId;
+            let hasVideo = doc.youtubeLink || doc.xLink || (doc.videoStatus && doc.videoStatus == 'ready');
+            let createdAt = new Date(doc.createdAt).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+            });
+            let likeCount = doc.likeCount;
+            let isLiked = doc.isLiked;
+            let isPinned = doc.pinTs;
+            let postDiv = postTemplate.cloneNode(true);
+
+            postDiv.querySelector(".post-image-anchor").href = `/post/${id}`;
+            postDiv.querySelector(".post-image").src = thumbnailUrl;
+            postDiv.querySelector(".post-pin").classList.add(`${isPinned ? 'flex' : 'hidden'}`);
+            postDiv.querySelector("#is-editor-pick").classList.add(`${isEditorPick ? 'flex' : 'hidden'}`);
+            if (false) {
+                // postDiv.querySelector(".post-description").classList.remove("hidden");
+                postDiv.querySelector(".post-description").textContent = doc.description || '';
+            }
+            if(hasVideo) {
+                postDiv.querySelector(".play-icon").classList.toggle("hidden");
+            }
+
+            if (false) {
+                const avatarContainer = postDiv.querySelector('.gallery-post-avatar-container');
+				avatarContainer.setAttribute("href", "/gallery/@" + doc.preferredUserName);
+                const usernameSpan = avatarContainer.querySelector('.post-username');
+                usernameSpan.textContent = "@" + doc.preferredUserName;
+
+                const avatarSVGContainer = avatarContainer.querySelector('.avatar-svg');
+                avatarSVGContainer.innerHTML = doc.avatarSVG;
+            }
+
+            if (canEdit) {
+                postDiv.querySelector(".pin-btn").addEventListener("click", () => {
+                        if (!thinking) {
+                            pinPost(id, `${isPinned ? 'unpin' : 'pin'}`,  refetchPosts, onPinError, setThinking);
+                        }
+                    });
+                postDiv.querySelector(".delete-btn").addEventListener("click", () => {
+                        if (!thinking) {
+                            deletePost(id, refetchPosts, onDeleteError, setThinking, 'Are you sure you want to delete this post?');
+                        }
+                    });
+                postDiv.querySelector(".dropdown-pin-text").textContent = `${doc.pinTs ? 'Unpin': 'Pin'}`;
+            }
+            else {
+                postDiv.querySelector('.report-btn').addEventListener('click', () => {
+                    if (!thinking) {
+                        reportPost(
+                            isLoggedIn,
+                            id,
+                            onError,
+                            setThinking,
+                            'Sign in to report',
+                            'Post has been reported and is under review.'
+                        );
+                    }
+                });
+            }
+
+            const likeButton = postDiv.querySelector(".post-toggle-like-btn");
+            likeButton.setAttribute('id', `toggle-like-btn-${id}`);
+            likeButton.addEventListener("click", () => {
+                if (!thinking) {
+                    togglePostLike(id, isLoggedIn, "/")
+                }
+            });
+            postDiv.querySelector(".heart-svg").setAttribute('id', `heart-icon-${id}`);
+            if(false) {
+              postDiv.querySelector(".post-like-count").setAttribute('id', `like-count-${id}`);
+            }
+            postsContainer.append(postDiv);
+            initHeartDomElements(id, isLiked, likeCount);
+            paginationContainer.style.display = 'flex';
+        }
+        setupDropdowns();
+    }
+
+    function reportImgLoadError(event, imgEl) {
+      imgEl.onerror=null;
+      imgEl.src='/images/preview-not-available.jpg';
+      let formData = new FormData();
+      formData.append('eventType', 'image_load_error');
+      formData.append('error', event.message || "Image failed to load, no error");
+      fetch('saveException', {
+          method: 'PUT',
+          body: formData,
+      });
+    }
+    function getUserName(postObj){
+        if(postObj.preferredUserName){
+            return "@" + postObj.preferredUserName;
+        }
+        return "@user." + postObj.defaultUserName;
+    }
+
+    function updatePaginationState(message, nextDisabled, prevDisabled, totalPages, currentPage) {
+        paginateNext.disabled = nextDisabled;
+        paginatePrev.disabled = prevDisabled;
+        paginateSelect.innerHTML = '';
+        if (totalPages > 1) {
+            for (let i = 1; i <= totalPages; i++) {
+                let opt = document.createElement('option');
+                opt.value = i;
+                opt.textContent = 'Page ' + i;
+                paginateSelect.appendChild(opt);
+            }
+            paginateSelect.value = currentPage;
+            paginateSelect.classList.remove('hidden');
+            currPageSpan.innerText = ' of ' + totalPages;
+        } else {
+            paginateSelect.classList.add('hidden');
+            currPageSpan.innerText = message;
+        }
+    }
+
+    function clearPostsContainer() {
+        postsContainer.innerHTML = '';
+    }
+
+    function showPostsNotAvailableMessage(message) {
+        clearPostsContainer();
+        paginationContainer.style.display = 'none';
+        let postDiv = document.createElement('div');
+        postDiv.innerHTML = `
+                <div class="w-[24px] h-[24px] self-start sm:self-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                    </svg>
+                </div>
+                <span class="text-lg ml-2">${message}</span>
+            `;
+        postDiv.classList.add('w-full', 'flex');
+        postsContainer.append(postDiv);
+    }
+
+    function onDeleteError() {
+        // TODO show snackbar
+        console.log('Failed to delete post');
+        window.alert('Failed to delete post')
+    }
+    function onPinError() {
+        // TODO show snackbar
+        console.log('Failed to pin post');
+        window.alert('Failed to pin post');
+    }
+
+
+    async function refetchPosts(resp, id) {
+        await getAndRenderPosts(currPage);
+    }
+
+    getAndRenderPosts(1);
+    }) ();
+</script>
+        </div>
+
+        <div id="followers-gallery" class="w-full hidden">
+            
+                
+                    <div class="flex items-stretch flex-wrap p-6 rounded-lg gap-6 ring-1 ring-gray-900/10 bg-gray-100 mb-2">
+                        <div class="w-full flex">
+                            <div class="w-[24px] h-[24px] self-start sm:self-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+                                    stroke="currentColor" class="w-6 h-6">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z">
+                                    </path>
+                                </svg>
+                            </div>
+                            <a class="text-lg ml-2 underline"  href="/login.jsp">
+                                Sign in to check out posts from people you follow
+                            </a>
+                        </div>
+                    </div>
+                
+                
+            
+        </div>
+
+    </div>
+
+	  <div style="background-color:#5271bb;">
+		<div style="width:1010px;height:100%;margin: 0 auto;background-color:#5271bb;color:white">
+			<div style="padding:30px 50px 50px 50px; font-size:16px;font-weight:100">
+				<div style="display:inline-block;width:277px;text-align:center;vertical-align:top;margin-right:20px">
+						<img src="images/users-circle-x2.png" width=76 height=76 />
+						<h3 style="font-size:24px;font-weight:100;font-size:26px;padding:10px 0 10px 0">Easy to Share</h3>
+					Just email a link to the web page to let others view and edit your whiteboard.  
+				</div><div style="display:inline-block;width:276px;text-align:center;vertical-align:top;margin:0 20px 0 20px">
+						<img src="images/thunder-circle-x2.png" width=76 height=76 />
+						<h3 style="font-size:24px;font-weight:100;font-size:26px;padding:10px 0 10px 0">Fast Syncing</h3>
+					Changes you make are relayed to other participants within a few seconds.
+				</div><div style="display:inline-block;width:277px;text-align:center;vertical-align:top;margin-left:20px">
+						<img src="images/tablet-circle-x2.png" width=76 height=76 />
+						<h3 style="font-size:24px;font-weight:100;font-size:26px;padding:10px 0 10px 0">Tablet Friendly</h3>
+					Use pinch-to-zoom gestures and your tablet''s stylus pen if available.  
+				</div>
+			</div>
+		</div>
+	  </div>
+	  <div style="background-color:white;">
+		<div style="width:1010px;height:100%;margin: 0 auto;">
+	  
+			<div style="margin:20px 0 10px 50px;
+					background-image:url('images/speech-bubbles.png');background-repeat:no-repeat;background-position:right top;background-size: contain">
+				<h1 style="padding:20px 0 10px 0;font-size:48px;font-weight:100">Questions or Comments?</h1>
+				<div style="line-height:160%;font-weight:300">
+					To contact us email:
+					<a href="mailto:support@whiteboardfox.com" style="text-decoration: none;margin:15px 0 20px 0;display:block;
+					text-align: center;font-size:18px;width:300px;
+			background-color:#5271bb;color:white;border-radius:3px">support@whiteboardfox.com</a>
+				</div>
+			</div>
+		</div>
+	</div>
+
+<script>
+    let notifyFollowersCheckbox = document.getElementById("notify-followers");
+    function canInviteFollowers(e) {
+        notifyFollowersCheckbox.disabled = e.target.value == "false";
+    }
+</script>
+
+
+<!--Start of Tawk.to Script-->
+<script type="text/javascript">
+    var Tawk_API=Tawk_API||{}, Tawk_LoadStart=new Date();
+    (function(){
+        var s1=document.createElement("script"),s0=document.getElementsByTagName("script")[0];
+        s1.async=true;
+        s1.src='https://embed.tawk.to/643d39d231ebfa0fe7f8c13e/1gu7ijoal';
+        s1.charset='UTF-8';
+        s1.setAttribute('crossorigin','*');
+        s0.parentNode.insertBefore(s1,s0);
+    })();
+</script>
+<!--End of Tawk.to Script-->
+
+<script>
+
+    const inviteesSelect = document.getElementById('invitees-select');
+    const inviteesCheck = document.getElementById('invitees-check');
+    inviteesSelect.addEventListener('change', (e) => {
+        inviteesCheck.value = e.target.value;
+        inviteesCheck.checked = true;
+        let limitCopy = inviteesCheck.value == "ALLOW_ANYONE" || inviteesCheck.value == "ALLOW_PRO_USERS";
+        document.getElementById("copyLimited").value = limitCopy;
+        document.getElementById("force-auth-participants").value = inviteesCheck.value == "ALLOW_ANYONE"
+          || inviteesCheck.value == "NOTIFY_FOLLOWERS" || inviteesCheck.value == "ALLOW_PRO_USERS";
+        document.getElementById("copyLimited-msg").style.display = limitCopy ? "block" : "none";
+    });
+
+    inviteesCheck.addEventListener('change', (e) => {
+       let limitCopy = inviteesCheck.checked && (inviteesCheck.value == "ALLOW_ANYONE" || inviteesCheck.value == "ALLOW_PRO_USERS");
+       document.getElementById("copyLimited").value = limitCopy;
+       document.getElementById("force-auth-participants").value = inviteesCheck.checked && (inviteesCheck.value == "ALLOW_ANYONE"
+         || inviteesCheck.value == "NOTIFY_FOLLOWERS") || inviteesCheck.value == "ALLOW_PRO_USERS";
+       document.getElementById("copyLimited-msg").style.display = limitCopy ? "block" : "none";
+    });
+
+    const topPostsTab = document.getElementById('top-posts-tab');
+    const followersPostsTab = document.getElementById('followers-posts-tab');
+
+    const topPostsGallery = document.getElementById('top-posts-gallery');
+    const followersGallery = document.getElementById('followers-gallery');
+
+    function showTopPostsGallery(showTopPosts) {
+        topPostsGallery.classList.toggle('hidden', !showTopPosts);
+        followersGallery.classList.toggle('hidden', showTopPosts);
+
+        topPostsTab.firstElementChild.classList.toggle('border-gray-200', !showTopPosts);
+        topPostsTab.firstElementChild.classList.toggle('border-[#5272bc]', showTopPosts);
+        topPostsTab.firstElementChild.classList.toggle('text-[#5272bc]', showTopPosts);
+
+        followersPostsTab.firstElementChild.classList.toggle('border-gray-200', showTopPosts);
+        followersPostsTab.firstElementChild.classList.toggle('border-[#5272bc]', !showTopPosts);
+        followersPostsTab.firstElementChild.classList.toggle('text-[#5272bc]', !showTopPosts);
+    }
+
+    topPostsTab.addEventListener('click', function (event) {
+        event.preventDefault();
+        showTopPostsGallery(true);
+    });
+
+    followersPostsTab.addEventListener('click', function (event) {
+        event.preventDefault();
+        showTopPostsGallery(false);
+    });
+
+    let chosenType = readCookie("user_type");
+    if (chosenType == "NA") {
+      document.querySelector(".user-type-query-container").style.display = "flex";
+      document.getElementById("createWhiteboardForm").style.display = "none";
+      document.getElementById("createWhiteboardFormActions").style.display = "none";
+    } else if (chosenType == "work") {
+      let startDrawingButton = document.getElementById("startDrawingButton");
+      startDrawingButton.setAttribute("href", "/diagramName?copyLimited=false&broadcast=false&expiry=14");
+      startDrawingButton.removeAttribute("onclick");
+    }
+</script>
+
+
+		</div>
+	<div style="flex-grow:1"></div>
+	<div style="background-color:#5271bb;">
+		<div style="width:1010px;height:100%;margin: 0 auto;background-color:#5271bb;color:white">
+			<div style="padding:10px 50px 10px 50px; font-size:12px;font-weight:300;">
+			&copy; 2026 Springbok Solutions LLC-FZ &nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="privacy.html" style="text-decoration: none;color:white">Privacy Policy</a>&nbsp;&nbsp;&middot;&nbsp;&nbsp;<a href="terms.html" style="text-decoration: none;color:white">Terms of Service</a>
+			</div>
+		</div>
+	  </div>
+
+</div>
+</body>
+</html>
+

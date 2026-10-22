@@ -1,8 +1,32 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "./whiteboardfox.css";
+@import "./whiteboard-mod-board.css";
 
 @custom-variant dark (&:is(.dark *));
+
+/*
+ * Whiteboard Mod brand palette.
+ *
+ * The source site's blue (`#233f98` text, `#5271bb` surfaces, `#5272bc` active
+ * tab, `#3f3ea9` field border) is replaced by coral. Tokens are declared as real
+ * Tailwind theme colours, so `bg-brand`, `text-brand-ink`, `border-brand-border`
+ * etc. resolve everywhere; a few raw hexes remain in components where the
+ * original markup used an exact literal (e.g. hover variants).
+ */
+@theme {
+  /* Text and primary brand ink. */
+  --color-brand: #e0533f;
+  /* Slightly deeper coral, used for hover states that darkened the source blue. */
+  --color-brand-dark: #c8402d;
+  /* Muted coral: footer, feature strip and secondary text. */
+  --color-brand-soft: #e8836f;
+  /* Field / select borders. */
+  --color-brand-border: #d1553f;
+  /* Pale coral tint for panels that used the source's `#efefef`. */
+  --color-brand-tint: #fbeeeb;
+}
 
 @theme inline {
   --color-background: var(--background);
@@ -55,7 +79,8 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  /* Whiteboard Mod's primary is coral. */
+  --primary: oklch(0.635 0.155 30);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -84,8 +109,7 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
+  --background: oklch(0.145 0 0);  --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
@@ -122,9 +146,7 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
-  }
-  html {
-    @apply font-sans;
+    @apply bg-background text-foreground font-sans;
+    font-weight: 300;
   }
 }

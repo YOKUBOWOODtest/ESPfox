@@ -1,0 +1,790 @@
+/**
+ * Whiteboard Mod — board chrome.
+ *
+ * The source board is a full-viewport GWT application: a 140px vertical menu
+ * strip on the left, a canvas filling the rest, and floating panels. These rules
+ * reproduce the source's own `Whiteboard.css` (see
+ * `docs/research/whiteboardfox/board.css`), translated from GWT's generated
+ * absolute positioning to plain layout. Names are kept identical where the
+ * source used them so the two files can be diffed side by side.
+ */
+
+/* The board owns the viewport; the page must not scroll behind it. */
+.wm-board {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  background: #fff;
+  /* The strip and canvas sit side by side and fill the viewport. */
+  display: flex;
+}
+
+/* --- Menu strip ---------------------------------------------------------- */
+
+/*
+ * Source: `#menuStrip { background-color: #EEEEEE; }`, 140px wide, each button
+ * 140x70 with the icon centred above a 13px label.
+ */
+#menuStrip {
+  background-color: #eeeeee;
+  width: 140px;
+  flex: 0 0 140px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+}
+
+.menu-button {
+  position: relative;
+  width: 140px;
+  height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  color: #000;
+  text-align: center;
+}
+
+.menu-button .html-face {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
+}
+
+/* GWT marks the active tool with a sunken 1px inset border and the down class. */
+.menu-button.gwt-ToggleButton-down {
+  border: 1px inset #666666;
+}
+
+.menu-button:hover {
+  background-color: #e3e3e3;
+}
+
+/* --- Panels shared chrome ------------------------------------------------ */
+
+/*
+ * `#uploadPanel, .liveUsersPanel` and `#layersPanel` share the same grey plate
+ * with a 1px black border in the source; the pencil pop-up reuses it too.
+ */
+.panel-plate {
+  background-color: #eeeeee;
+  border: 1px solid #000;
+}
+
+#colorsPanel {
+  background-color: #eeeeee;
+  border: 1px solid #000;
+  display: grid;
+  grid-template-columns: repeat(7, 70px);
+  grid-auto-rows: 70px;
+}
+
+.color-cell {
+  width: 70px;
+  height: 70px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  color: #000;
+}
+
+.color-cell.gwt-ToggleButton-down {
+  border: 1px inset #666666;
+}
+
+.color-cell:hover {
+  background-color: #e3e3e3;
+}
+
+/* --- Live users panel ---------------------------------------------------- */
+
+/*
+ * Source `Whiteboard.css`: a flex column with padding, a scroll area holding
+ * `#usersTable`, then the search row and the two action buttons.
+ */
+.liveUsersPanel {
+  background-color: #eeeeee;
+  border: 1px solid #000;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding: 12px;
+}
+
+.liveUsersPanel .usersScrollArea {
+  overflow-y: auto;
+  flex: 1;
+}
+
+#usersTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 1em;
+}
+
+#usersTable tr {
+  height: 60px;
+}
+
+.userName {
+  width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  margin-left: 12px;
+  border: none;
+  outline: none;
+  /* The source's link colour, left as-is: it is a link, not brand chrome. */
+  color: #0066cc;
+  text-decoration: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  /* Larger than the source's 1em: the nickname is the row's primary line. */
+  font-size: 1.15em;
+  font-weight: 500;
+  background: transparent;
+  padding: 0;
+}
+
+.userName:hover {
+  text-decoration: underline;
+}
+
+/* Identity block: nickname on top, device id beneath it in small type. */
+.userIdentity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.userDeviceId {
+  margin-left: 12px;
+  font-size: 0.68em;
+  color: #6b6b6b;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+  user-select: text;
+}
+
+.usersPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 500;
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #a6a6a6;
+}
+
+/* --- Pencil options panel ------------------------------------------------ */
+
+#pencilPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 14px;
+  color: #000;
+}
+
+.pencilMenuHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 15px;
+  border-bottom: 1px solid #a6a6a6;
+  padding-bottom: 6px;
+}
+
+.pencilMenuClose {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  color: #333;
+}
+
+.pencilMenuClose:hover {
+  background: #e3e3e3;
+}
+
+.pencilMenuSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pencilMenuLabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #555;
+}
+
+.pencilMenuLabel em {
+  font-style: normal;
+  color: #000;
+  font-weight: 500;
+}
+
+.pencilMenuBody {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 16px;
+}
+
+.pencilMenuColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* --- Colour wheel ------------------------------------------------------- */
+
+.colorWheel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.colorWheelWheel {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  user-select: none;
+}
+
+.colorWheelRing {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  cursor: crosshair;
+  border-radius: 50%;
+}
+
+/* The hue handle rides the middle of the ring band. */
+.colorWheelRingHandle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.colorWheelSquareWrap {
+  position: absolute;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.colorWheelSquare {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.colorWheelSquareHandle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.colorWheelControls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.colorWheelPreviewRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.colorWheelPreview {
+  width: 44px;
+  height: 44px;
+  border: 1px solid #a6a6a6;
+  flex: none;
+}
+
+.colorWheelHexField {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.colorWheelHexField input {
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+  border: 1px solid #a6a6a6;
+  background: #fff;
+  color: #000;
+}
+
+.colorWheelRecent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.colorWheelRecentRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.colorWheelRecentChip {
+  width: 22px;
+  height: 22px;
+  border: 1px solid #a6a6a6;
+  cursor: pointer;
+  padding: 0;
+}
+
+.colorWheelRecentChip:hover {
+  outline: 2px solid #e0533f;
+  outline-offset: 1px;
+}
+
+/* --- Gradient settings ---------------------------------------------------- */
+
+.gradientSettings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gradientSettingsTitle {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #333333;
+}
+
+.gradientTypeRow {
+  display: flex;
+  gap: 22px;
+  align-items: center;
+}
+
+.gradientTypeOption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.gradientTypeOption input {
+  accent-color: #e0533f;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.gradientPreview {
+  height: 18px;
+  border: 1px solid #a6a6a6;
+  border-radius: 3px;
+}
+
+.gradientStopRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gradientSwatch {
+  width: 26px;
+  height: 22px;
+  border: 1px solid #a6a6a6;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  flex: none;
+}
+
+.gradientSwatch:hover {
+  outline: 2px solid #e0533f;
+  outline-offset: 1px;
+}
+
+.gradientStopSlider {
+  flex: 1;
+  accent-color: #e0533f;
+}
+
+.gradientAddButton {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid #d5d5d5;
+  background: #f2f4f8;
+  color: #e0533f;
+  font-size: 17px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gradientAddButton:hover {
+  background: #e9edf3;
+}
+
+.gradientStopRemove {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid #a6a6a6;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gradientStopRemove:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.gradientStopRemove:hover:not(:disabled) {
+  border-color: #e0533f;
+  color: #e0533f;
+}
+
+/* --- Thickness: slider + editable number -------------------------------- */
+
+.pencilWidthControl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pencilWidthControl input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: #e0533f;
+}
+
+.pencilWidthField {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.pencilWidthField input[type="number"] {
+  width: 58px;
+  height: 28px;
+  padding: 0 4px;
+  font-family: inherit;
+  font-size: 14px;
+  text-align: right;
+  border: 1px solid #a6a6a6;
+  background: #fff;
+  color: #000;
+}
+
+.pencilWidthUnit {
+  font-size: 11px;
+  color: #555;
+}
+
+.pencilWidthPreview {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 4px;
+  background: #fff;
+  border: 1px solid #a6a6a6;
+  overflow: hidden;
+}
+
+.pencilWidthPreviewLine {
+  display: block;
+  width: 100%;
+  border-radius: 999px;
+  /* Keep a hairline stroke visible even at width 1. */
+  min-height: 1px;
+}
+
+.pencilMenuSliders {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.pencilMenuSlider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pencilMenuSlider input[type="range"] {
+  width: 100%;
+  accent-color: #e0533f;
+}
+
+.avatar-container {
+  position: relative;
+  width: 30px;
+  height: 30px;
+}
+
+.avatar-container img,
+.avatar-container svg {
+  max-width: 100%;
+  border-radius: 50%;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+.userStatus {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  position: absolute;
+  right: 0;
+  bottom: 4px;
+}
+
+.offline.userStatus {
+  background: #a1a1a1;
+}
+
+.online.userStatus {
+  background: #00c004;
+}
+
+.pro.userStatus {
+  background-color: #835eff;
+}
+
+.liveUsersPanel .usersSearchRow {
+  flex: 0 0 auto;
+  height: 48px;
+  margin-bottom: 8px;
+}
+
+.liveUsersPanel .usersSearchBar {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  border: 1px solid #999;
+  border-radius: 4px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.usersSearchBox {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  font-size: 1em;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+}
+
+.usersSearchClear {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  cursor: pointer;
+  color: #666;
+  font-size: 1.1em;
+  user-select: none;
+}
+
+.usersSearchClear:hover {
+  color: #000;
+  background: #e0e0e0;
+}
+
+.noUsersFound {
+  padding: 12px 4px;
+  color: #666;
+  font-size: 0.95em;
+  text-align: center;
+}
+
+/* Source: `.liveUsersPanel > .usersActionsRow { height: 60px }`. */
+.liveUsersPanel .usersActionsRow {
+  height: 60px;
+}
+
+.bottomButtonsRow {
+  display: flex;
+  gap: 8px;
+  height: 100%;
+}
+
+.bottomButtonsRow > div {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+button.whoDrewBtn {
+  height: 60px;
+  width: 100%;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 1em;
+  background: #eeeeee;
+  border: 1px solid #a6a6a6;
+  color: #000;
+}
+
+button.whoDrewBtn:hover {
+  background: #e3e3e3;
+}
+
+/* --- Canvas -------------------------------------------------------------- */
+
+/*
+ * The canvas fills whatever the menu strip does not. Drawing colours are the
+ * source's palette; the canvas itself is painted by the component.
+ */
+#canvasId {
+  flex: 1 1 auto;
+  /* A canvas has an intrinsic 300x150 size; without this the flex item refuses
+     to shrink below it and overflows the viewport. */
+  min-width: 0;
+  height: 100%;
+  cursor: default;
+  display: block;
+  touch-action: none;
+}
+
+#canvasId.cursor-crosshair {
+  cursor: crosshair;
+}
+
+#canvasId.cursor-default {
+  cursor: default;
+}
+
+#canvasId.cursor-grab {
+  cursor: grab;
+}
+
+#canvasId.cursor-grab:active {
+  cursor: grabbing;
+}
+
+/* --- User options dropdown ----------------------------------------------- */
+
+.userOptionsDropdown {
+  border: 1px solid #646464;
+  display: flex;
+  flex-direction: column;
+  background-color: #eeeeee;
+}
+
+.userOptionsDropdown .optionsButton {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  border: none;
+  border-bottom: 1px solid #a6a6a6;
+  outline: none;
+  cursor: pointer;
+  background-color: #eeeeee;
+  text-decoration: none;
+  color: #000;
+  font-family: inherit;
+  font-size: 1em;
+  text-align: left;
+}
+
+.userOptionsDropdown .optionsButton:last-child {
+  border-bottom: none;
+}
+
+.userOptionsDropdown .optionsButton:hover {
+  background-color: #e3e3e3;
+}
+
+.userOptionsButton {
+  padding: 6px 12px;
+  cursor: pointer;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  border: 1px solid #a6a6a6;
+  color: #000;
+  background-color: #eeeeee;
+  height: 44px;
+  font-family: inherit;
+  font-size: 1em;
+}
+
+/* --- Snackbar (source `#snackbar`) -------------------------------------- */
+
+#snackbar {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #333;
+  color: #fff;
+  border-radius: 4px;
+  padding: 6px 16px;
+  font-size: 15px;
+  z-index: 2;
+  pointer-events: none;
+  transition: opacity 250ms ease;
+}

@@ -1,0 +1,41 @@
+/**
+ * Whiteboard Mod clone — global chrome.
+ *
+ * The source site sets these on `<body>` directly; its `style.css` reset is
+ * ignored here because Tailwind's preflight already normalises the same
+ * elements (and re-running it would override utility classes).
+ */
+
+body {
+  background-color: #fff;
+  /* Coral replaces the source's brand blue. */
+  color: var(--color-brand);
+  font-family: var(--font-roboto), Roboto, sans-serif;
+  font-size: 20px;
+  font-weight: 300;
+}
+
+/* The source sets `img { display: inline }`; Tailwind's preflight uses block. */
+img {
+  display: inline;
+}
+
+/* `@keyframes spin` in the source, renamed to avoid clashing with Tailwind's. */
+@keyframes wf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* `@keyframes progress` for the gallery loading bar. */
+@keyframes wf-progress {
+  0% {
+    transform: translateX(0) scaleX(0);
+  }
+  40% {
+    transform: translateX(0) scaleX(0.4);
+  }
+  100% {
+    transform: translateX(100%) scaleX(0.5);
+  }
+}
