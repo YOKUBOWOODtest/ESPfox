@@ -11,21 +11,38 @@ import type {
 import { normalizeGradientStops } from "@/lib/board/stroke";
 import { rotateHue, withAlpha } from "@/lib/board/color";
 
-/**
- * Draw tool options panel.
- *
- * Mirrors the source's pencil pop-up but expanded with:
- *   - Color wheel (artist's HSV wheel)
- *   - Style selector: Marker | Fill | Gradient Fill | Calligraphy
- *   - Size presets (Finest/Correcto/Medio/Grande/Enorme ×4)
- *   - Shape tools
- */
+/** Shape tool definitions matching the draw panel. */
+export const SHAPE_TOOLS = [
+  "Línea",
+  "Círculo",
+  "Elipse",
+  "Cuadrado",
+  "Rectángulo",
+  "Diamante",
+  "Flecha",
+  "Estrella",
+  "Corazón",
+  "Globo de diálogo",
+  "Estilo libre",
+  "Snap",
+] as const;
+
+export type ShapeTool = (typeof SHAPE_TOOLS)[number];
+
 export interface DrawPanelProps {
   style: StrokeStyle;
   drawStyle: DrawStyle;
   onStyleChange: (style: StrokeStyle) => void;
   onDrawStyleChange: (drawStyle: DrawStyle) => void;
   onClose: () => void;
+  /** Currently selected shape tool, or null. */
+  shapeTool: ShapeTool | null;
+  /** Called when a shape tool is selected. */
+  onShapeToolChange: (tool: ShapeTool | null) => void;
+  /** Whether text tool is active. */
+  textTool: boolean;
+  /** Called when text tool is toggled. */
+  onTextToolChange: (active: boolean) => void;
 }
 
 const STYLE_LABELS: Record<DrawStyle, string> = {
@@ -65,7 +82,17 @@ function gradientPreviewCss(stops: GradientStop[], type: GradientType): string {
     : `linear-gradient(90deg, ${parts.join(", ")})`;
 }
 
-export function DrawPanel({ style, drawStyle, onStyleChange, onDrawStyleChange, onClose }: DrawPanelProps) {
+export function DrawPanel({
+  style,
+  drawStyle,
+  onStyleChange,
+  onDrawStyleChange,
+  onClose,
+  shapeTool,
+  onShapeToolChange,
+  textTool,
+  onTextToolChange,
+}: DrawPanelProps) {
   const [widthDraft, setWidthDraft] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"main" | "shapes">("main");
   /** Index of the gradient stop being edited, or -1 for none. */
@@ -401,6 +428,33 @@ export function DrawPanel({ style, drawStyle, onStyleChange, onDrawStyleChange, 
               </div>
             </div>
 
+            {/* Text Tool */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
+                Tools
+              </label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() => onTextToolChange(!textTool)}
+                  style={{
+                    padding: "8px 16px",
+                    border: `2px solid ${textTool ? "#e0533f" : "#a6a6a6"}`,
+                    borderRadius: 4,
+                    background: textTool ? "#e0533f" : "#f5f5f5",
+                    color: textTool ? "#fff" : "#000",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: textTool ? 600 : 400,
+                    transition: "all 0.15s ease",
+                  }}
+                  data-testid="draw-text-tool"
+                >
+                  Texto
+                </button>
+              </div>
+            </div>
+
             {/* Size Presets */}
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
@@ -533,37 +587,23 @@ export function DrawPanel({ style, drawStyle, onStyleChange, onDrawStyleChange, 
                 Shape Tools
               </label>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
-                {[
-                  "Línea",
-                  "Círculo",
-                  "Elipse",
-                  "Cuadrado",
-                  "Rectángulo",
-                  "Diamante",
-                  "Flecha",
-                  "Estrella",
-                  "Corazón",
-                  "Globo de diálogo",
-                  "Estilo libre",
-                  "Snap",
-                ].map((shape) => (
+                {SHAPE_TOOLS.map((shape) => (
                   <button
                     key={shape}
                     type="button"
-                    onClick={() => {
-                      // Shape tool selection logic would go here
-                      console.log("Shape selected:", shape);
-                    }}
+                    onClick={() => onShapeToolChange(shapeTool === shape ? null : shape)}
                     style={{
                       padding: "8px 4px",
-                      border: "1px solid #a6a6a6",
+                      border: `2px solid ${shapeTool === shape ? "#e0533f" : "#a6a6a6"}`,
                       borderRadius: 4,
-                      background: "#fff",
+                      background: shapeTool === shape ? "#e0533f" : "#fff",
+                      color: shapeTool === shape ? "#fff" : "#000",
                       cursor: "pointer",
                       fontSize: 11,
                       textAlign: "center",
                       whiteSpace: "nowrap",
                     }}
+                    data-testid={`shape-tool-${shape.toLowerCase().replace(/[^a-z]/g, "-")}`}
                   >
                     {shape}
                   </button>

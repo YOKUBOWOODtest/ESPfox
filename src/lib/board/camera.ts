@@ -15,8 +15,9 @@ export interface Camera {
   scale: number;
 }
 
-export const MIN_SCALE = 0.1;
-export const MAX_SCALE = 8;
+/** No hard limits: zoom is infinite in both directions. */
+export const MIN_SCALE = 0;
+export const MAX_SCALE = Number.POSITIVE_INFINITY;
 
 /** The source starts every board at a 1:1 zoom. */
 export function initialCamera(): Camera {
