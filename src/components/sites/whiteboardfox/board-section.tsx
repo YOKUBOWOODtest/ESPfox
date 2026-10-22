@@ -510,16 +510,30 @@ export function BoardSection({ boardId }: { boardId: string }) {
   }, [canvasEl, schedulePaint]);
 
   /**
-   * Convert a canvas pointer event to screen coordinates.
+   * Convert a canvas pointer/touch event to screen coordinates.
    * Also tracks touch count for multi-touch gestures.
    */
-  const screenPosition = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (event.nativeEvent instanceof TouchEvent) {
-      setTouchCount(event.nativeEvent.touches.length);
+  const screenPosition = (event: React.PointerEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    const nativeEvent = event.nativeEvent;
+    let clientX: number, clientY: number;
+
+    if (nativeEvent instanceof TouchEvent) {
+      const touch = nativeEvent.changedTouches[0] || nativeEvent.touches[0];
+      if (touch) {
+        clientX = touch.clientX;
+        clientY = touch.clientY;
+        setTouchCount(nativeEvent.touches.length);
+      } else {
+        return { x: 0, y: 0 };
+      }
+    } else {
+      clientX = nativeEvent.clientX;
+      clientY = nativeEvent.clientY;
     }
+
     return {
-      x: event.clientX - (canvasRef.current?.getBoundingClientRect().left ?? 0),
-      y: event.clientY - (canvasRef.current?.getBoundingClientRect().top ?? 0),
+      x: clientX - (canvasRef.current?.getBoundingClientRect().left ?? 0),
+      y: clientY - (canvasRef.current?.getBoundingClientRect().top ?? 0),
     };
   };
 
