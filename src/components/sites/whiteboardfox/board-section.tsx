@@ -31,7 +31,7 @@ import { useLobbyGate } from "./use-lobby-gate";
 import { usePro } from "./use-pro";
 import { useRoom } from "./use-room";
 import { useRoomMic } from "./use-room-mic";
-import { useIsMobile, useTouchGestures } from "./use-mobile";
+import { useIsMobile, useTouchGestures, multiTouchActiveRef } from "./use-mobile";
 import { WHITEBOARDMOD_ORIGIN } from "./site-header";
 import {
   clampScale,
@@ -785,6 +785,11 @@ export function BoardSection({ boardId }: { boardId: string }) {
   };
 
   const begin = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    // Ignorar eventos pointer si hay un gesto multi-touch activo (pinch/pan con 2 dedos)
+    // Esto evita que el lapiz dibuje rayas mientras se hace zoom con dos dedos.
+    if (multiTouchActiveRef.current) {
+      return;
+    }
     if (event.button !== 0) return;
     try {
       canvasRef.current?.setPointerCapture(event.pointerId);
@@ -1002,6 +1007,11 @@ export function BoardSection({ boardId }: { boardId: string }) {
   };
 
   const extend = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    // Si se activa multi-touch durante un gesto, cancelarlo
+    if (multiTouchActiveRef.current) {
+      gesture.current = null;
+      return;
+    }
     const active = gesture.current;
     if (!active) {
       updateHoverCursor(event);

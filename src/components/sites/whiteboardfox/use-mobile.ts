@@ -33,6 +33,12 @@ export function useIsMobile(): boolean {
  * - Two-finger pan
  * Funciona junto con los gestos de puntero existentes.
  */
+/**
+ * Ref compartido para indicar si hay un gesto multi-touch activo.
+ * Los handlers de React (onPointerDown, etc.) deben leer esto y salir temprano.
+ */
+export const multiTouchActiveRef = { current: false };
+
 export function useTouchGestures(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   camera: React.MutableRefObject<{ x: number; y: number; scale: number }>,
@@ -67,28 +73,27 @@ export function useTouchGestures(
     };
 
     const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 2) {
-        // Iniciar pinch zoom
+      if (e.touches.length >= 2) {
+        // Iniciar pinch zoom o two-finger pan
         isPinching = true;
+        multiTouchActiveRef.current = true;
         initialDistance = getTouchDistance(e.touches);
         initialScale = camera.current.scale;
         initialCenter = getTouchCenter(e.touches);
         initialCamera = { ...camera.current };
         lastTwoFingerCenter = initialCenter;
 
-        // Prevenir scroll nativo durante pinch
+        // Prevenir scroll nativo y que React reciba pointer events
         e.preventDefault();
-      } else if (e.touches.length === 1 && !isPinching) {
-        // Single touch - dejar que el sistema de punteros lo maneje
-        // pero permitir two-finger pan si viene después
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       if (!isPinching) {
         // Detectar two-finger pan (iniciado después de un touch)
-        if (e.touches.length === 2) {
+        if (e.touches.length >= 2) {
           isPinching = true;
+          multiTouchActiveRef.current = true;
           initialDistance = getTouchDistance(e.touches);
           initialScale = camera.current.scale;
           initialCenter = getTouchCenter(e.touches);
@@ -102,6 +107,7 @@ export function useTouchGestures(
       if (e.touches.length < 2) {
         // Pinch terminado
         isPinching = false;
+        multiTouchActiveRef.current = false;
         return;
       }
 
@@ -151,6 +157,7 @@ export function useTouchGestures(
     const handleTouchEnd = (e: TouchEvent) => {
       if (e.touches.length < 2) {
         isPinching = false;
+        multiTouchActiveRef.current = false;
       } else {
         // Recalcular centro si un dedo se levantó
         lastTwoFingerCenter = getTouchCenter(e.touches);
@@ -171,6 +178,7 @@ export function useTouchGestures(
       canvas.removeEventListener("touchend", handleTouchEnd);
       canvas.removeEventListener("touchcancel", handleTouchEnd);
       canvas.style.touchAction = "";
+      multiTouchActiveRef.current = false;
     };
   }, [canvasRef, camera, viewport, schedulePaint, enabled]);
 }
