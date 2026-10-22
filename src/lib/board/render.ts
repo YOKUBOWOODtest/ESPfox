@@ -109,8 +109,6 @@ export interface RenderInput {
   lasso?: LassoPath | null;
   /** Draw the eraser brush ring under the cursor. */
   cursor?: { x: number; y: number; radius: number } | null;
-  /** The spawn zone for user avatars, if any. */
-  spawnZone?: { center: { x: number; y: number }; cols: number; rows: number; spacing: number } | null;
 }
 
 /** Sizes the buffer to the element box and resets the base transform. */
@@ -149,11 +147,6 @@ export function render(input: RenderInput): void {
   // Painter's algorithm: the grid sits underneath everything.
   if (input.showGrid !== false) {
     drawGrid(context, camera, viewport, input.gridSize, tint);
-  }
-
-  // Draw spawn zone (in world space)
-  if (input.spawnZone) {
-    drawSpawnZone(context, camera, viewport, input.spawnZone, tint);
   }
 
   // World space: translate then scale, so stroke coordinates are untouched by
@@ -235,39 +228,6 @@ function drawGrid(
     }
     context.stroke();
   }
-}
-
-/** Draws the spawn zone rectangle for user avatars. */
-function drawSpawnZone(
-  context: CanvasRenderingContext2D,
-  camera: Camera,
-  viewport: Viewport,
-  spawnZone: { center: { x: number; y: number }; cols: number; rows: number; spacing: number },
-  tint: (hex: string) => string,
-): void {
-  const { center, cols, rows, spacing } = spawnZone;
-  const halfWidth = ((cols - 1) * spacing) / 2;
-  const halfHeight = ((rows - 1) * spacing) / 2;
-  const left = center.x - halfWidth - spacing / 2;
-  const right = center.x + halfWidth + spacing / 2;
-  const top = center.y - halfHeight - spacing / 2;
-  const bottom = center.y + halfHeight + spacing / 2;
-
-  // Convert to screen coordinates
-  const screenLeft = (left - camera.x) * camera.scale;
-  const screenRight = (right - camera.x) * camera.scale;
-  const screenTop = (top - camera.y) * camera.scale;
-  const screenBottom = (bottom - camera.y) * camera.scale;
-
-  context.save();
-  context.setTransform(viewport.dpr, 0, 0, viewport.dpr, 0, 0);
-  context.strokeStyle = tint("#e0533f");
-  context.lineWidth = 2 / viewport.dpr;
-  context.setLineDash([10 / viewport.dpr, 6 / viewport.dpr]);
-  context.beginPath();
-  context.rect(screenLeft, screenTop, screenRight - screenLeft, screenBottom - screenTop);
-  context.stroke();
-  context.restore();
 }
 
 function drawStroke(

@@ -1,0 +1,28 @@
+# Render Blueprint for whiteboardmod
+# Deploy with: render deploy --yaml render.yaml
+
+services:
+  - type: web
+    name: whiteboardmod
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      # Add these when you have them:
+      # - key: WHITEBOARDMOD_ORIGIN
+      #   value: https://your-render-app.onrender.com
+    healthCheckPath: /
+    autoDeploy: true
+
+  # Optional: If you want a separate static site for GitHub Pages redirect
+  # - type: web
+  #   name: whiteboardmod-landing
+  #   runtime: static
+  #   buildCommand: cp next.config.github.ts next.config.ts && npm run build
+  #   staticPublishPath: ./out
+  #   pullRequestPreviewsEnabled: true

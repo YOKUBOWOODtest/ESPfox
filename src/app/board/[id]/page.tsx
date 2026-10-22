@@ -15,6 +15,17 @@ export const metadata: Metadata = {
     "Whiteboard Mod is a simple online whiteboard that allows you to collaborate with others in real time.",
 };
 
+/**
+ * For GitHub Pages static export: generate a single demo board so the build succeeds.
+ * For Render deployment: returns empty array to skip static generation (handled by server).
+ */
+export async function generateStaticParams() {
+  if (process.env.GITHUB_PAGES_BUILD === "true") {
+    return [{ id: "demo" }];
+  }
+  return [];
+}
+
 export default async function BoardPage({
   params,
 }: {

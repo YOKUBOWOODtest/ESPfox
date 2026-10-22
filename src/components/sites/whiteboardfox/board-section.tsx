@@ -10,9 +10,9 @@ import {
   TrashIcon,
   UndoIcon,
 } from "./board-icons";
-import { DrawPanel, type ShapeTool } from "./draw-panel";
+import { DrawPanel } from "./draw-panel";
 import { ImportMenu } from "./import-menu";
-import { ItemMenu, type ItemMenuAction, UserItemMenu, type UserItemMenuAction, toggleBan, isUserBanned } from "./item-menu";
+import { ItemMenu, type ItemMenuAction } from "./item-menu";
 import { OptionsMenu } from "./options-menu";
 import { RoomBar } from "./room-bar";
 import { RoomChatBar, RoomMessages, RoomReactions } from "./room-chat";
@@ -43,8 +43,6 @@ import {
 import { gridStep } from "@/lib/board/grid";
 import {
   createImportedItem,
-  createUserItem,
-  computeSpawnPositions,
   itemHitTest,
   itemPlayButtonHit,
   itemsInPaintOrder,
@@ -187,10 +185,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const [tool, setTool] = useState<Tool>("draw");
   const [style, setStyle] = useState<StrokeStyle>(DEFAULT_STYLE);
   const [drawStyle, setDrawStyle] = useState<DrawStyle>(DEFAULT_DRAW_STYLE);
-  /** Active shape tool when using the Draw tool. */
-  const [shapeTool, setShapeTool] = useState<ShapeTool | null>(null);
-  /** Active text tool - when true, clicking places a text box. */
-  const [textTool, setTextTool] = useState(false);
   const [drawPanelOpen, setDrawPanelOpen] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -205,21 +199,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
     id: string;
     x: number;
     y: number;
-  } | null>(null);
-
-  /** The three-dot menu of a user avatar item, and where it opens. */
-  const [userItemMenu, setUserItemMenu] = useState<{
-    id: string;
-    x: number;
-    y: number;
-  } | null>(null);
-
-  /** The spawn zone center and dimensions, for drawing the spawn area. */
-  const [spawnZone, setSpawnZone] = useState<{
-    center: { x: number; y: number };
-    cols: number;
-    rows: number;
-    spacing: number;
   } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -463,7 +442,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
       selection: box,
       lasso: lasso.current ?? null,
       cursor: cursor.current,
-      spawnZone,
     });
   });
 
@@ -672,23 +650,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
     });
   };
 
-  /** Opens the three-dot menu of a user item, next to its dots handle. */
-  const openUserItemMenu = (item: ImportedItem) => {
-    const canvas = canvasRef.current;
-    const stage = stageRef.current;
-    if (!canvas || !stage) {
-      return;
-    }
-    const chrome = itemChromePositions(camera.current, item);
-    const canvasBox = canvas.getBoundingClientRect();
-    const stageBox = stage.getBoundingClientRect();
-    setUserItemMenu({
-      id: item.id,
-      x: canvasBox.left - stageBox.left + chrome.dots.x,
-      y: canvasBox.top - stageBox.top + chrome.dots.y,
-    });
-  };
-
   /** Saves an imported item to the computer. */
   const downloadItem = (item: ImportedItem) => {
     const link = document.createElement("a");
@@ -815,33 +776,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
     schedulePaint();
   };
 
-  /**
-   * What the user picked from a user item's three-dot menu.
-   */
-  const handleUserItemAction = (action: UserItemMenuAction, item: ImportedItem) => {
-    setUserItemMenu(null);
-    if (!item) return;
-
-    // Extract target device ID from the item id (format: "user-{deviceId}")
-    const targetDeviceId = item.id.replace("user-", "");
-
-    if (action === "kick") {
-      doc.beginEdit();
-      doc.removeItem(item.id);
-      doc.endEdit();
-      schedulePaint();
-    } else if (action === "ban" && isHost) {
-      const newlyBanned = toggleBan(targetDeviceId, user.id);
-      if (newlyBanned) {
-        // Also remove from current board
-        doc.beginEdit();
-        doc.removeItem(item.id);
-        doc.endEdit();
-      }
-      schedulePaint();
-    }
-  };
-
   const begin = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return;
     try {
@@ -895,11 +829,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
           return;
         }
         if (itemHandle === "dots") {
-          if (item.kind === "user") {
-            openUserItemMenu(item);
-          } else {
-            openItemMenu(item);
-          }
+          openItemMenu(item);
           return;
         }
         if (itemHandle === "download") {
@@ -942,7 +872,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
       if (item) {
         doc.selectItem(item.id);
         setItemMenu(null);
-        setUserItemMenu(null);
         if (!item.locked) {
           doc.beginEdit();
           gesture.current = {
@@ -1024,49 +953,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
     }
 
     // Draw (marker, fill, gradient-fill, calligraphy).
-    // If a shape tool is selected, create the shape immediately at the click point.
-    if (shapeTool) {
-      const shapePoints = createShapePoints(shapeTool, world, style.width * 10);
-      const shapeStrokeStyle: StrokeStyle = {
-        ...style,
-        drawStyle: "fill", // Shapes are filled by default
-      };
-      doc.commitStroke(shapePoints, shapeStrokeStyle);
-      setShapeTool(null); // Reset after creating one shape
-      schedulePaint();
-      return;
-    }
-
-    // Text tool: create a text item at the click point
-    if (textTool) {
-      // For now, create a simple text item as an imported item
-      // In a full implementation, this would open a text editor
-      const textItem = createImportedItem(
-        {
-          kind: "image", // Use image kind for text rendering
-          name: "Text",
-          src: `data:image/svg+xml,${encodeURIComponent(
-            `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60" viewBox="0 0 200 60">
-              <text x="100" y="35" font-family="system-ui" font-size="24" fill="${style.color}" text-anchor="middle" dominant-baseline="central">Texto</text>
-            </svg>`
-          )}`,
-          width: 200,
-          height: 60,
-          duration: 0,
-        },
-        world.x,
-        world.y,
-      );
-      doc.beginEdit();
-      doc.addItem(textItem);
-      doc.endEdit();
-      doc.selectItem(textItem.id);
-      setTextTool(false);
-      schedulePaint();
-      return;
-    }
-
-    // eslint-disable-next-line react-hooks/purity
     gesture.current = { kind: "draw", startTime: performance.now(), drawStyle };
     const start = snapToGrid(world);
     drafting.current = [
@@ -1300,136 +1186,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
     doc.commitStroke(closedPoints, fillStrokeStyle);
   };
 
-  /** Creates points for a shape centered at the given world position. */
-  const createShapePoints = (
-    shape: string,
-    center: { x: number; y: number },
-    size: number,
-  ): { x: number; y: number; pressure: number; t: number }[] => {
-    const half = size / 2;
-    const points: { x: number; y: number; pressure: number; t: number }[] = [];
-
-    switch (shape) {
-      case "Línea":
-      case "Line":
-        points.push(
-          { x: center.x - half, y: center.y, pressure: 1, t: 0 },
-          { x: center.x + half, y: center.y, pressure: 1, t: 0 },
-        );
-        break;
-      case "Círculo":
-      case "Circle":
-      case "Elipse":
-      case "Ellipse":
-        // Circle as 16-gon
-        for (let i = 0; i <= 16; i++) {
-          const angle = (i / 16) * Math.PI * 2;
-          points.push({
-            x: center.x + Math.cos(angle) * half,
-            y: center.y + Math.sin(angle) * half,
-            pressure: 1,
-            t: 0,
-          });
-        }
-        break;
-      case "Cuadrado":
-      case "Square":
-      case "Rectángulo":
-      case "Rectangle":
-        points.push(
-          { x: center.x - half, y: center.y - half, pressure: 1, t: 0 },
-          { x: center.x + half, y: center.y - half, pressure: 1, t: 0 },
-          { x: center.x + half, y: center.y + half, pressure: 1, t: 0 },
-          { x: center.x - half, y: center.y + half, pressure: 1, t: 0 },
-        );
-        break;
-      case "Diamante":
-      case "Diamond":
-        points.push(
-          { x: center.x, y: center.y - half, pressure: 1, t: 0 },
-          { x: center.x + half, y: center.y, pressure: 1, t: 0 },
-          { x: center.x, y: center.y + half, pressure: 1, t: 0 },
-          { x: center.x - half, y: center.y, pressure: 1, t: 0 },
-        );
-        break;
-      case "Flecha":
-      case "Arrow":
-        points.push(
-          { x: center.x - half, y: center.y, pressure: 1, t: 0 },
-          { x: center.x, y: center.y - half / 2, pressure: 1, t: 0 },
-          { x: center.x + half / 2, y: center.y - half / 2, pressure: 1, t: 0 },
-          { x: center.x + half / 2, y: center.y - half, pressure: 1, t: 0 },
-          { x: center.x + half, y: center.y, pressure: 1, t: 0 },
-          { x: center.x + half / 2, y: center.y + half, pressure: 1, t: 0 },
-          { x: center.x + half / 2, y: center.y + half / 2, pressure: 1, t: 0 },
-          { x: center.x, y: center.y + half / 2, pressure: 1, t: 0 },
-        );
-        break;
-      case "Estrella":
-      case "Star":
-        // 5-pointed star
-        for (let i = 0; i < 10; i++) {
-          const angle = (i / 10) * Math.PI * 2 - Math.PI / 2;
-          const r = i % 2 === 0 ? half : half * 0.4;
-          points.push({
-            x: center.x + Math.cos(angle) * r,
-            y: center.y + Math.sin(angle) * r,
-            pressure: 1,
-            t: 0,
-          });
-        }
-        break;
-      case "Corazón":
-      case "Heart":
-        // Simple heart shape
-        for (let i = 0; i <= 20; i++) {
-          const angle = (i / 20) * Math.PI * 2;
-          const r = half * (1 - Math.sin(angle) * 0.3);
-          points.push({
-            x: center.x + Math.cos(angle) * r,
-            y: center.y + Math.sin(angle) * r * 1.2,
-            pressure: 1,
-            t: 0,
-          });
-        }
-        break;
-      case "Globo de diálogo":
-      case "Speech Bubble":
-        const bubbleW = half * 1.5;
-        const bubbleH = half;
-        points.push(
-          { x: center.x - bubbleW, y: center.y - bubbleH, pressure: 1, t: 0 },
-          { x: center.x + bubbleW, y: center.y - bubbleH, pressure: 1, t: 0 },
-          { x: center.x + bubbleW, y: center.y + bubbleH / 2, pressure: 1, t: 0 },
-          { x: center.x + half / 2, y: center.y + bubbleH / 2, pressure: 1, t: 0 },
-          { x: center.x, y: center.y + bubbleH, pressure: 1, t: 0 },
-          { x: center.x - half / 2, y: center.y + bubbleH / 2, pressure: 1, t: 0 },
-          { x: center.x - bubbleW, y: center.y + bubbleH / 2, pressure: 1, t: 0 },
-        );
-        break;
-      case "Estilo libre":
-      case "Freehand":
-        // This is just the regular draw tool, not a shape
-        return [];
-      case "Snap":
-        // Snap is a setting, not a shape
-        return [];
-      default:
-        // Default to circle
-        for (let i = 0; i <= 16; i++) {
-          const angle = (i / 16) * Math.PI * 2;
-          points.push({
-            x: center.x + Math.cos(angle) * half,
-            y: center.y + Math.sin(angle) * half,
-            pressure: 1,
-            t: 0,
-          });
-        }
-    }
-
-    return points;
-  };
-
   const finish = () => {
     const active = gesture.current;
     gesture.current = null;
@@ -1565,48 +1321,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const resetView = () => {
     camera.current = initialCamera();
     setZoomLabel("100%");
-    spawnUsersAtCenter();
     schedulePaint();
   };
-
-  /** Spawns user avatars in a grid at the center of the view. */
-  const spawnUsersAtCenter = useCallback(() => {
-    const centre = { x: 0, y: 0 }; // World center (0,0)
-    if (!hostId) {
-      setSpawnZone(null);
-      return;
-    }
-    const participants = board.participants.filter((p) => !isUserBanned(p.key, hostId));
-    if (participants.length === 0) {
-      setSpawnZone(null);
-      return;
-    }
-    const positions = computeSpawnPositions(centre, participants.length);
-    const newItems = participants.map((p, i) =>
-      createUserItem(
-        { id: p.key, nickname: p.nickname, avatarHue: p.avatarHue, avatar: undefined },
-        positions[i].x,
-        positions[i].y,
-      ),
-    );
-    doc.beginEdit();
-    for (const item of newItems) {
-      doc.addItem(item);
-    }
-    doc.endEdit();
-    // Store spawn zone for visual reference
-    const cols = Math.ceil(Math.sqrt(participants.length));
-    const rows = Math.ceil(participants.length / cols);
-    setSpawnZone({ center: centre, cols, rows, spacing: 90 });
-    schedulePaint();
-  }, [board.participants, hostId, doc, schedulePaint]);
-
-  // Spawn users on initial load
-  useEffect(() => {
-    if (ready && effectiveId) {
-      spawnUsersAtCenter();
-    }
-  }, [ready, effectiveId, spawnUsersAtCenter]);
 
   if (!ready) {
     return (
@@ -1745,47 +1461,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
           </span>
         </button>
 
-        {/* Select tool handles: shown when Select tool is active and there's a selection */}
-        {tool === "select" && docSelectedIds.current.size > 0 && (
-          <>
-            <button
-              type="button"
-              className="menu-button"
-              title="Move selection (drag on selection)"
-              data-testid="select-handle-move"
-            >
-              <span className="html-face">⤓ Move</span>
-            </button>
-            <button
-              type="button"
-              className="menu-button"
-              title="Rotate selection (drag rotation handle)"
-              data-testid="select-handle-rotate"
-            >
-              <span className="html-face">↻ Rotate</span>
-            </button>
-            <button
-              type="button"
-              className="menu-button"
-              title="Scale selection (drag corner/edge handles)"
-              data-testid="select-handle-scale"
-            >
-              <span className="html-face">⤢ Scale</span>
-            </button>
-          </>
-        )}
-
-        {/* Reset View button - returns to original zoom and position */}
-        <button
-          type="button"
-          className="menu-button"
-          title="Reset view to 100% at center (Key R)"
-          onClick={resetView}
-          data-testid="tool-reset-view"
-        >
-          <span className="html-face">⌂ Reset View</span>
-        </button>
-
         {/* --- The room: here.fm's half of the mix, under the board's tools --- */}
         <RoomBar
           roomUrl={`${WHITEBOARDMOD_ORIGIN}/board/${effectiveId}`}
@@ -1845,25 +1520,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
               />
             );
           })()}
-
-        {userItemMenu &&
-          (() => {
-            const item = docItems.current.find((entry) => entry.id === userItemMenu.id);
-            if (!item) {
-              return null;
-            }
-            return (
-              <UserItemMenu
-                item={item}
-                x={userItemMenu.x}
-                y={userItemMenu.y}
-                onAction={handleUserItemAction}
-                onClose={() => setUserItemMenu(null)}
-                currentDeviceId={user.id}
-                isHost={isHost}
-              />
-            );
-          })()}
       </div>
 
       {drawPanelOpen && (
@@ -1873,10 +1529,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
           onStyleChange={setStyle}
           onDrawStyleChange={setDrawStyle}
           onClose={() => setDrawPanelOpen(false)}
-          shapeTool={shapeTool}
-          onShapeToolChange={setShapeTool}
-          textTool={textTool}
-          onTextToolChange={setTextTool}
         />
       )}
 

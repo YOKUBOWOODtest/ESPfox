@@ -18,7 +18,7 @@
  * by value.
  */
 
-export type ImportedKind = "image" | "file" | "audio" | "voice" | "user";
+export type ImportedKind = "image" | "file" | "audio" | "voice";
 
 export interface ImportedItem {
   /** Stable id, used as the React key and in the undo history. */
@@ -169,65 +169,6 @@ export function formatDuration(seconds: number): string {
   const minutes = Math.floor(total / 60);
   const rest = total % 60;
   return `${minutes}:${rest.toString().padStart(2, "0")}`;
-}
-
-/** Size of a user avatar item on the board. */
-export const USER_AVATAR_SIZE = 64;
-
-/** Creates a user avatar item for a participant. */
-export function createUserItem(
-  participant: { id: string; nickname: string; avatarHue: number; avatar?: string | null },
-  x: number,
-  y: number,
-): ImportedItem {
-  const avatarUrl = participant.avatar ?? `data:image/svg+xml,${encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${USER_AVATAR_SIZE}" height="${USER_AVATAR_SIZE}" viewBox="0 0 ${USER_AVATAR_SIZE} ${USER_AVATAR_SIZE}">
-      <circle cx="32" cy="32" r="32" fill="hsl(${participant.avatarHue}, 75%, 43%)"/>
-      <text x="32" y="40" font-family="system-ui" font-size="24" font-weight="600" fill="white" text-anchor="middle" dominant-baseline="central">${participant.nickname.slice(0, 1).toUpperCase()}</text>
-    </svg>`
-  )}`;
-  return {
-    id: `user-${participant.id}`,
-    kind: "user",
-    name: participant.nickname,
-    src: avatarUrl,
-    x,
-    y,
-    width: USER_AVATAR_SIZE,
-    height: USER_AVATAR_SIZE,
-    scale: 1,
-    rotation: 0,
-    mirrored: false,
-    pinned: false,
-    locked: false,
-    duration: 0,
-    createdAt: Date.now(),
-  };
-}
-
-/** Computes spawn positions for a grid of users around a center. */
-export function computeSpawnPositions(
-  center: { x: number; y: number },
-  count: number,
-  spacing: number = 90,
-): { x: number; y: number }[] {
-  if (count <= 0) return [];
-  // Find grid dimensions that form a rectangle as close to square as possible
-  const cols = Math.ceil(Math.sqrt(count));
-  const rows = Math.ceil(count / cols);
-  const startX = center.x - ((cols - 1) * spacing) / 2;
-  const startY = center.y - ((rows - 1) * spacing) / 2;
-  const positions: { x: number; y: number }[] = [];
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      if (positions.length >= count) break;
-      positions.push({
-        x: startX + col * spacing,
-        y: startY + row * spacing,
-      });
-    }
-  }
-  return positions;
 }
 
 /**

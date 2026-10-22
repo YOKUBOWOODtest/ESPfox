@@ -1,51 +1,72 @@
-# Dependencies (reinstalled inside Docker)
+# Dependencies
 node_modules
-pnpm-debug.log*
-npm-debug.log*
-yarn-debug.log*
+.pnp
+.pnp.js
 
-# Build output
-.next
-out
+# Testing
+coverage
+
+# Next.js
+.next/
+out/
+
+# Production
 build
 dist
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local env files
+.env*.local
+.env
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
 
 # Git
 .git
 .gitignore
 
-# Environment files (pass via docker-compose env_file or runtime env vars)
-.env
-.env.local
-.env.*.local
-
-# Editor / OS
-.vscode
-.idea
-.DS_Store
+# OS
 Thumbs.db
-*.swp
-*.swo
+ehthumbs.db
+Desktop.ini
 
-# Agent / AI tool configs (not needed at runtime)
-.agents
-.claude
-.cursor
-.opencode
-AGENTS.md
-CLAUDE.md
+# Scripts
+scripts/*.log
+scripts/*.txt
 
-# Docs / research (large, not needed at runtime)
-docs
-scripts
+# Docs
+docs/research/**/*
+docs/design-references/**/*
 
-# Docker files themselves (no need to copy into image)
-Dockerfile
-docker-compose.yml
-.dockerignore
+# Uploads
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.webp
 
-# Misc
-*.tsbuildinfo
-README.md
-CHANGELOG.md
-LICENSE
+# Large files
+*.mp4
+*.mov
+*.avi
+*.mkv
