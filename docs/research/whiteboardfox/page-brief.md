@@ -240,6 +240,8 @@ Verified for this round's changes:
 - **Reaction** → picking an emoji puts one `[data-testid="room-reaction"]` element floating over the canvas.
 - **Reload** → the room is still there after a reload; the conversation survives in `localStorage`.
 - **Chat bar** → 860×52 at (140, 648) with the avatar, the nickname, the `@`, the emoji button, the "Say something..." field and **Send**; the canvas buffer is 1360×898 at a 1500×950 viewport, i.e. 52px shorter than the window.
+- **Unread badge** → a message injected into the room while the chat is closed badges the Chat button with `1`; opening the chat clears it.
+- **Cross-tab** → a message sent in one tab appears in the other through the `storage` event.
 
 ## Not reproduced (disclosed)
 

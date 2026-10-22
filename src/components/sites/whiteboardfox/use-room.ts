@@ -134,11 +134,21 @@ export function useRoom(
   const getServerSnapshot = useCallback(() => serverRoom, []);
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  // Opening the chat is what marks the conversation as read.
+  /**
+   * When the conversation was last read.
+   *
+   * An open chat is reading the room, so the marker follows it: every message
+   * that arrives while the chat is on screen counts as read, and only the ones
+   * that arrive while it is closed are worth a badge.
+   */
+  const latestTs = snapshot.messages.length
+    ? snapshot.messages[snapshot.messages.length - 1].ts
+    : 0;
+
   useEffect(() => {
     if (!active) return;
     storeFor(boardId).lastReadAt = Date.now();
-  }, [active, boardId]);
+  }, [active, boardId, latestTs]);
 
   // Reactions fade away on their own.
   useEffect(() => {

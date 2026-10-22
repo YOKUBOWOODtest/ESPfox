@@ -837,6 +837,48 @@ async function main() {
     JSON.stringify(survived),
   );
 
+  // A message that arrives while the chat is closed is worth a badge.
+  const boardId = BOARD.split("/board/")[1];
+  await evaluate(`document.querySelector('[data-testid="room-chat"]').click(); 'closed'`);
+  await sleep(400);
+  await evaluate(`(() => {
+    const key = 'wf_room_' + ${JSON.stringify(boardId)};
+    const room = JSON.parse(localStorage.getItem(key) || '{"messages":[],"reactions":[]}');
+    room.messages.push({
+      id: 'm-unread',
+      author: 'Ana',
+      deviceId: 'WM-OTHER-TAB',
+      text: 'hola desde otra pestaña',
+      ts: Date.now(),
+    });
+    const raw = JSON.stringify(room);
+    localStorage.setItem(key, raw);
+    // Another tab's write reaches this one through the storage event.
+    window.dispatchEvent(new StorageEvent('storage', { key, newValue: raw }));
+    return 'injected';
+  })()`);
+  await sleep(600);
+  const badge = await evaluate(
+    `document.querySelector('[data-testid="room-unread"]')?.textContent ?? ''`,
+  );
+  check(
+    "a message that arrives while the chat is closed is badged",
+    badge === "1",
+    `badge=${badge}`,
+  );
+
+  // Opening the chat clears the badge again.
+  await evaluate(`document.querySelector('[data-testid="room-chat"]').click(); 'opened'`);
+  await sleep(400);
+  const badgeAfter = await evaluate(
+    `document.querySelector('[data-testid="room-unread"]')?.textContent ?? ''`,
+  );
+  check(
+    "opening the chat clears the badge",
+    badgeAfter === "",
+    `badge=${badgeAfter}`,
+  );
+
   // =========================================================================
   // summary
   // =========================================================================

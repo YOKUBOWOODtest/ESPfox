@@ -246,13 +246,13 @@ docs/research/whiteboardfox/              page-brief.md, source.html, style.css,
                                           gallery-posts.json
 docs/design-references/                   source + local screenshots, comparison.png,
                                           board-draw-tools.png (marker + gradient fill)
-scripts/board-canvas-check.mjs            headless-Chrome canvas regression (37 checks)
+scripts/board-canvas-check.mjs            headless-Chrome canvas regression (39 checks)
 ```
 
 ## Checks run
 
 - `npm run check` — ESLint clean (0 errors, 0 warnings), `tsc --noEmit` clean, `next build` prerenders 8 static routes (`/`, `/pro`, `/account`, `/lobby`, `/options`, `/privacy`, `/terms`, `/_not-found`) plus the dynamic `/board/[id]`.
-- A headless-Chrome-over-CDP regression exercises the canvas end to end — buffer sizing, marker colour/width commits, the live preview, `Rellenar`, and the gradient settings (type radios, preview, stop rows, add/remove, position slider) with two-, three-stop, radial and repositioned ramps — asserting the resulting pixels, plus the Select tool dragging a selected shape and never painting. 37/37 green, including the room checks (the bar sits under Clear, every room control is on the board, the invite popover offers the board's own address, a message shows up and is stored under one key per board, a reaction floats, and the room survives a reload). Run it with `npm run dev` in one shell and `node scripts/board-canvas-check.mjs` in another.
+- A headless-Chrome-over-CDP regression exercises the canvas end to end — buffer sizing, marker colour/width commits, the live preview, `Rellenar`, and the gradient settings (type radios, preview, stop rows, add/remove, position slider) with two-, three-stop, radial and repositioned ramps — asserting the resulting pixels, plus the Select tool dragging a selected shape and never painting. 39/39 green, including the room checks (the bar sits under Clear, every room control is on the board, the invite popover offers the board's own address, a message shows up and is stored under one key per board, a reaction floats, the room survives a reload, and the unread badge appears for a message that arrives while the chat is closed and clears when it is opened again). Run it with `npm run dev` in one shell and `node scripts/board-canvas-check.mjs` in another.
 - Layout compared numerically against the live page via the browser's computed styles.
 - Pixel diff of the source and clone at 1000×700 — residual differences are the empty ad column, the ad-driven vertical offset, font rasterisation, and thumbnail content.
 - Every interaction above was exercised in a real browser and its resulting DOM state asserted.
@@ -293,8 +293,9 @@ Each of these was measured from the canvas pixel buffer rather than eyeballed:
 | Chat bar | 860×52 at `x=140`, pinned to the bottom of the board; the canvas is 52px shorter than the viewport, so the bar never covers a drawing. |
 | A message | Sending `hola room` renders one bubble with that text and stores the room under exactly one key (`wf_room_<boardId>`); it is still there after a reload. |
 | A reaction | Picking an emoji puts one floating element over the canvas. |
+| Unread badge | A message that arrives while the chat is closed badges the Chat button (`1`); opening the chat clears it. |
 
 > Note for anyone re-running these: the browser harness keeps tabs `hidden`, and a hidden tab never fires `requestAnimationFrame`. The canvas repaints from rAF for continuous gestures (pan, in-progress lasso, live transforms), so those are only observable in a visible tab. Everything that repaints through a React state change — stroke commits, tool switches, zoom label, selection commits — is measurable regardless, which is how the table above was produced.
 >
-> The canvas assertions above were re-run against a headless Chrome driven over CDP, with `requestAnimationFrame` polyfilled to `setTimeout` via `Page.addScriptToEvaluateOnNewDocument` (headless Chrome does not drive rAF either). Pointer input goes through `Input.dispatchMouseEvent`, so the board sees trusted events and `setPointerCapture` works. The full regression is 37/37 green.
+> The canvas assertions above were re-run against a headless Chrome driven over CDP, with `requestAnimationFrame` polyfilled to `setTimeout` via `Page.addScriptToEvaluateOnNewDocument` (headless Chrome does not drive rAF either). Pointer input goes through `Input.dispatchMouseEvent`, so the board sees trusted events and `setPointerCapture` works. The full regression is 39/39 green.
 
