@@ -11,7 +11,7 @@ This build deliberately departs from the source in these ways:
 3. **No accounts at all.** Identity is the device, and the only profile field is the nickname. A device with no nickname is forced to the Lobby before it can open a board.
 4. **Boards are an identical copy of the original board screen, with an upgraded Draw tool.** `/board/<id>` reproduces the source's `#menuStrip`, canvas and `.liveUsersPanel` at the measured geometry, and a new board mints its own id. The Draw pop-up swaps the source's 7-colour palette and 4 width buttons for an artist's colour wheel, a slider + editable number, a style selector (Marker / Rellenar / Relleno degradado / Caligrafía) and a full gradient settings section (Lineal / Radial, a live preview and one row per colour stop).
 5. **Every generated board lives on `whiteboardmod.com`.** Share links read `https://whiteboardmod.com/board/<id>`, and the footer's privacy/terms links stay local (`/privacy`, `/terms`) instead of pointing back at the source site.
-6. **Pro is free.** `Activa tu pro` → `/pro`; one click, no plans, no gateway.
+6. **Pro is free.** `/pro` activates it in one click, no plans, no gateway. The header no longer links to it.
 7. **No Top Posts / Following tabs and no Sign In.**
 
 ### Brand palette
@@ -130,7 +130,7 @@ The footer's `Privacy Policy` and `Terms of Service` links stay on `whiteboardmo
 
 The homepage in full, including every interaction that is actually reachable without the source's backend:
 
-- **Global chrome** — `#eeeeee` header with the `Hammersmith One` wordmark plus Lobby, `Activa tu pro` and the device chip; coral footer. Both fonts are self-hosted through `next/font`.
+- **Global chrome** — `#eeeeee` header with the `Hammersmith One` wordmark (no logo illustration) plus Lobby and the device chip; coral footer. Both fonts are self-hosted through `next/font`.
 - **Hero** — fixed 1010px column, two-column grid, `Simple Online Whiteboard` heading, real-time subtitle, orange `Start Drawing` button with the `go.png` glyph, and the Whiteboard-ID jump field (now navigating to the local board).
 - **Options overlay** — opened by `Start Drawing`. Reproduces the three "Other participants can…" radios, the Invite checkbox and target select (including the copy-limited note), the `More Options` / `Create Whiteboard` actions, and the creating-spinner state. The fun/work question was removed.
 - **Gallery** — 12 real snapshots per page in the source's 3-column card grid, editor's-choice badges, the per-card overflow menu with cross-closing and outside-click behaviour, the like toggle, the `of 160` pagination controls with a working `Previous` / `Next` and the top loading bar. Cards link to the local board instead of the live site.
@@ -139,7 +139,7 @@ The homepage in full, including every interaction that is actually reachable wit
 - **Profile overlay and `/account`** — device id (read-only) plus an editable nickname.
 - **Features strip** and **Questions or Comments?** contact section, with the original icons and `speech-bubbles.png` background.
 
-Assets (`icon.png`, `go.png`, `close-button.png`, the three 152×152 feature icons, `speech-bubbles.png`) and 36 gallery thumbnails are downloaded into `public/sites/whiteboardfox/`.
+Assets (`go.png`, `close-button.png`, the three 152×152 feature icons, `speech-bubbles.png`) and 36 gallery thumbnails are downloaded into `public/sites/whiteboardfox/`. The source's `icon.png` logo mark was dropped along with the header's pro link, so it is no longer shipped.
 
 ## Fidelity
 

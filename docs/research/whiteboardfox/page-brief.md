@@ -37,15 +37,16 @@ Source routes with no local counterpart, deleted rather than left as dead links:
 - Fonts: `Hammersmith One` (logo only) + `Roboto` weights 100/300 from Google Fonts.
 - Content column: fixed `width: 1010px; margin: 0 auto` at every breakpoint — the page does **not** collapse on mobile (`scrollWidth` stays 1010 at a 390px viewport). This is reproduced deliberately.
 - Header strip: `background: #eeeeee`, inner row `20px 50px 10px`, space-between, 91px tall.
-  - Logo: `images/icon.png` 64×64 + text `Whiteboard Mod`, 32px Hammersmith One, `word-spacing: -8px`.
-  - Right (clone): `Lobby`, `Activa tu pro` → `/pro`, then the device chip (replaces the source's `Pricing` link, 20px spacer and `Sign In`). `.mainLink` = no underline, coral, underline on hover.
+  - Logo: the source pairs `images/icon.png` 64×64 with the text `Whiteboard Mod`, 32px Hammersmith One, `word-spacing: -8px`. **The clone keeps only the wordmark** — the illustration next to it was removed.
+  - Right (clone): `Lobby`, then the device chip (replaces the source's `Pricing` link, 20px spacer and `Sign In`). `.mainLink` = no underline, coral, underline on hover. **The `Activa tu pro` → `/pro` nav link was removed**, so the header no longer advertises Pro; `/pro` itself still works when reached directly.
 - Footer strip: coral, inner `10px 50px`, 12px/300 text: `© 2026 Whiteboard Mod · Privacy Policy · Terms of Service`.
 
 ## Local customisations (not in the source)
 
 - **Rebrand.** All "Whiteboard Fox" strings, titles and metadata are "Whiteboard Mod"; the brand blue is coral.
 - **`Start Drawing` skips the fun/work question.** It opens the Options overlay directly, or redirects to `/lobby?from=board` when the device has no nickname. `use-user-type.ts`, `wf_user_type` and the two glyph icons were deleted.
-- **`Activa tu pro` replaces `Pricing`.** `/pro` activates Pro in one click. No plan table, price, form or payment link (`form` count on `/pro` is 0; no external links). Flips `wf_pro`.
+- **`Activa tu pro` replaced `Pricing`, and was then dropped from the header.** `/pro` activates Pro in one click. No plan table, price, form or payment link (`form` count on `/pro` is 0; no external links). Flips `wf_pro`. The nav link that pointed at it has been removed, so Pro is no longer advertised in the chrome.
+- **The logo illustration is gone.** The header shows the `Whiteboard Mod` wordmark on its own; the source's `images/icon.png` mark next to it was removed.
 - **Sign In is gone.** No login or registration UI exists anywhere.
 - **Device identity replaces auth.** `wf_device_id` (e.g. `WM-E049-91D1`) is minted on first use and persisted; `wf_nickname` is the only editable profile field. `hasProfile()` gates every board route.
 - **Boards copy the original screen.** `/board/<id>` is a faithful rebuild of the source's board (see *Board screen* below). `/board/new` mints an id and rewrites the URL. Gallery cards link to `/board/post-<id>`. Share links use `https://whiteboardmod.com`.
@@ -175,11 +176,11 @@ Interactions verified live in the browser:
 Interactions verified for the local customisations:
 
 - **Gallery cleanup** → `#top-posts-tab` and `#followers-posts-tab` are absent; 12 cards render; no "Sign in to check out posts" text anywhere.
-- **Header** → nav links are exactly `Lobby → /lobby` and `Activa tu pro → /pro`; no `Pricing` or `Sign In` link exists.
+- **Header** → the only nav link is `Lobby → /lobby`; no `Pricing`, `Sign In` or pro link exists.
 - **First run** → a device with no `wf_nickname` gets `#profileEl` visible, a minted `wf_device_id`, the "Elige un apodo" copy, and exactly one editable input (`#nickname`).
 - **Saving a nickname** → persists to `wf_nickname`, updates the header chip to `@Zorro`, closes the panel. Saving with no edit does not clear it.
-- **Reload persistence** → `wf_device_id`, `wf_nickname` and `wf_pro` survive a reload; the header reads `Pro activo` and the chip shows `@Zorro` + `PRO`.
-- **Pro activation** → `/pro` shows `Todavía no está activo` and one button; after the click: `Pro activo en este dispositivo`, button gone, header `Pro activo`, chip badge `PRO`, `wf_pro="true"`. Payment audit on the page: 0 forms, 0 checkout/subscribe/price controls, 0 external links.
+- **Reload persistence** → `wf_device_id`, `wf_nickname` and `wf_pro` survive a reload; the chip shows `@Zorro` + `PRO`.
+- **Pro activation** → `/pro` shows `Todavía no está activo` and one button; after the click: `Pro activo en este dispositivo`, button gone, chip badge `PRO`, `wf_pro="true"`. Payment audit on the page: 0 forms, 0 checkout/subscribe/price controls, 0 external links.
 - **Pro unlocks options** → with Pro: invite target `anyone`, `force-auth-participants=false`, `my followers` enabled, no sign-in prompt. Without Pro: invite target `my followers`, `force-auth-participants=true`, `my followers` disabled, upsell note shown.
 - **`/account`** → shows the device id read-only, 0 password/email inputs, exactly the nickname editable; editing it propagates to `wf_nickname` and the header chip.
 
