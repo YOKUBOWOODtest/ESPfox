@@ -14,6 +14,7 @@ import { DrawPanel } from "./draw-panel";
 import { ImportMenu } from "./import-menu";
 import { ItemMenu, type ItemMenuAction } from "./item-menu";
 import { OptionsMenu } from "./options-menu";
+import { MobileToolbar } from "./mobile-toolbar";
 import { RoomBar } from "./room-bar";
 import { RoomChatBar, RoomMessages, RoomReactions } from "./room-chat";
 import { markJoined, useBoard } from "./use-board";
@@ -30,6 +31,7 @@ import { useLobbyGate } from "./use-lobby-gate";
 import { usePro } from "./use-pro";
 import { useRoom } from "./use-room";
 import { useRoomMic } from "./use-room-mic";
+import { useIsMobile, useTouchGestures } from "./use-mobile";
 import { WHITEBOARDMOD_ORIGIN } from "./site-header";
 import {
   clampScale,
@@ -182,6 +184,9 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const room = useRoom(effectiveId, displayName(user), user.id, chatOpen);
   const mic = useRoomMic();
 
+  /** Detecta si estamos en móvil para cambiar la UI. */
+  const isMobile = useIsMobile();
+
   const [tool, setTool] = useState<Tool>("draw");
   const [style, setStyle] = useState<StrokeStyle>(DEFAULT_STYLE);
   const [drawStyle, setDrawStyle] = useState<DrawStyle>(DEFAULT_DRAW_STYLE);
@@ -189,25 +194,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [zoomLabel, setZoomLabel] = useState("100%");
-
-  /** Mobile-specific state */
-  const [isMobile, setIsMobile] = useState(false);
-  const [toolbarOpen, setToolbarOpen] = useState(false);
-  const [touchCount, setTouchCount] = useState(0);
-  const pinchStartRef = useRef<{ distance: number; scale: number; centerX: number; centerY: number } | null>(null);
-  const twoFingerPanRef = useRef<{ lastX: number; lastY: number } | null>(null);
-
-  // Detect mobile on mount
-  useEffect(() => {
-    const checkMobile = () => {
-      const mobile = window.innerWidth < 768 || /Mobi|Android/i.test(navigator.userAgent);
-      setIsMobile(mobile);
-      if (!mobile) setToolbarOpen(false);
-    };
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
   /**
    * The three-dot menu of an imported item, and where it opens.
    *
@@ -509,113 +495,14 @@ export function BoardSection({ boardId }: { boardId: string }) {
     return () => ro.disconnect();
   }, [canvasEl, schedulePaint]);
 
-  /**
-   * Convert a canvas pointer/touch event to screen coordinates.
-   * Also tracks touch count for multi-touch gestures.
-   */
-  const screenPosition = (event: React.PointerEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    const nativeEvent = event.nativeEvent;
-    let clientX: number, clientY: number;
+  /** Touch gestures: pinch-to-zoom y two-finger pan (solo en móvil). */
+  useTouchGestures(canvasRef, camera, viewport, schedulePaint, isMobile);
 
-    if (nativeEvent instanceof TouchEvent) {
-      const touch = nativeEvent.changedTouches[0] || nativeEvent.touches[0];
-      if (touch) {
-        clientX = touch.clientX;
-        clientY = touch.clientY;
-        setTouchCount(nativeEvent.touches.length);
-      } else {
-        return { x: 0, y: 0 };
-      }
-    } else {
-      clientX = nativeEvent.clientX;
-      clientY = nativeEvent.clientY;
-    }
-
-    return {
-      x: clientX - (canvasRef.current?.getBoundingClientRect().left ?? 0),
-      y: clientY - (canvasRef.current?.getBoundingClientRect().top ?? 0),
-    };
-  };
-
-  /** Handle pinch-to-zoom and two-finger pan for touch devices. */
-  const handleTouchGesture = (
-    event: React.PointerEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>,
-    phase: "start" | "move" | "end"
-  ): boolean => {
-    // Get touches from either TouchEvent or PointerEvent
-    let touches: TouchList | null = null;
-    const nativeEvent = event.nativeEvent;
-    if (nativeEvent instanceof TouchEvent) {
-      touches = nativeEvent.touches;
-    } else if ("touches" in nativeEvent) {
-      // Some pointer events might have touches
-      touches = (nativeEvent as { touches: TouchList }).touches;
-    }
-    if (!touches || touches.length < 2) return false;
-
-    const touch1 = touches[0];
-    const touch2 = touches[1];
-    const canvas = canvasRef.current;
-    if (!canvas) return false;
-
-    const rect = canvas.getBoundingClientRect();
-    const x1 = touch1.clientX - rect.left;
-    const y1 = touch1.clientY - rect.top;
-    const x2 = touch2.clientX - rect.left;
-    const y2 = touch2.clientY - rect.top;
-
-    const centerX = (x1 + x2) / 2;
-    const centerY = (y1 + y2) / 2;
-    const distance = Math.hypot(x2 - x1, y2 - y1);
-
-    if (phase === "start") {
-      pinchStartRef.current = {
-        distance,
-        scale: camera.current.scale,
-        centerX,
-        centerY,
-      };
-      twoFingerPanRef.current = { lastX: centerX, lastY: centerY };
-      return true;
-    }
-
-    if (phase === "move" && pinchStartRef.current) {
-      const start = pinchStartRef.current;
-
-      // Pinch to zoom
-      if (distance > 10) {
-        const scaleFactor = distance / start.distance;
-        const newScale = clampScale(start.scale * scaleFactor);
-        if (newScale !== camera.current.scale) {
-          // Zoom towards the center point between fingers
-          const worldCenter = screenToWorld(camera.current, centerX, centerY);
-          camera.current = zoomAt(camera.current, centerX, centerY, newScale / camera.current.scale);
-        }
-      }
-
-      // Two-finger pan (when not pinching much)
-      if (twoFingerPanRef.current && distance > 30) {
-        const dx = centerX - twoFingerPanRef.current.lastX;
-        const dy = centerY - twoFingerPanRef.current.lastY;
-        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-          camera.current = panBy(camera.current, dx, dy);
-          twoFingerPanRef.current = { lastX: centerX, lastY: centerY };
-        }
-      }
-
-      setZoomLabel(formatZoom(camera.current.scale));
-      schedulePaint();
-      return true;
-    }
-
-    if (phase === "end") {
-      pinchStartRef.current = null;
-      twoFingerPanRef.current = null;
-      return true;
-    }
-
-    return false;
-  };
+  /** Convert a canvas pointer event to screen coordinates. */
+  const screenPosition = (event: React.PointerEvent<HTMLCanvasElement>) => ({
+    x: event.clientX - (canvasRef.current?.getBoundingClientRect().left ?? 0),
+    y: event.clientY - (canvasRef.current?.getBoundingClientRect().top ?? 0),
+  });
 
   /** Check if a screen point is over a selection handle. */
   const handleAt = (screenX: number, screenY: number): HandleId | null => {
@@ -897,29 +784,16 @@ export function BoardSection({ boardId }: { boardId: string }) {
     schedulePaint();
   };
 
-  const begin = (event: React.PointerEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if ("button" in event && event.button !== 0) return;
-
-    const isPointerEvent = "pointerType" in event;
-
-    // Handle multi-touch gestures (pinch zoom, two-finger pan)
-    if (isPointerEvent && event.pointerType === "touch" && handleTouchGesture(event as React.PointerEvent<HTMLCanvasElement>, "start")) {
-      try {
-        canvasRef.current?.setPointerCapture(event.pointerId);
-      } catch {}
-      return;
+  const begin = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (event.button !== 0) return;
+    try {
+      canvasRef.current?.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic pointers (and some touch stacks) have no capturable id; the
+      // board must still start the gesture rather than abort.
     }
 
-    if (isPointerEvent) {
-      try {
-        canvasRef.current?.setPointerCapture(event.pointerId);
-      } catch {
-        // Synthetic pointers (and some touch stacks) have no capturable id; the
-        // board must still start the gesture rather than abort.
-      }
-    }
-
-    const screen = screenPosition(event as React.PointerEvent<HTMLCanvasElement>);
+    const screen = screenPosition(event);
     const world = screenToWorld(camera.current, screen.x, screen.y);
 
     /**
@@ -1094,7 +968,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
         x: start.x,
         y: start.y,
         // The source passes a literal 0 pressure for mouse input.
-        pressure: isPointerEvent && event.pointerType === "pen" ? event.pressure : 0,
+        pressure: event.pointerType === "pen" ? event.pressure : 0,
         t: 0,
       },
     ];
@@ -1127,21 +1001,13 @@ export function BoardSection({ boardId }: { boardId: string }) {
     }
   };
 
-  const extend = (event: React.PointerEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    // Handle multi-touch gestures during move
-    const isPointerEvent = "pointerType" in event;
-    if (isPointerEvent && event.pointerType === "touch" && handleTouchGesture(event, "move")) {
-      return;
-    }
-
+  const extend = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const active = gesture.current;
     if (!active) {
-      if (isPointerEvent) {
-        updateHoverCursor(event as React.PointerEvent<HTMLCanvasElement>);
-      }
+      updateHoverCursor(event);
       return;
     }
-    const screen = screenPosition(event as React.PointerEvent<HTMLCanvasElement>);
+    const screen = screenPosition(event);
     const world = screenToWorld(camera.current, screen.x, screen.y);
 
     if (active.kind === "pan") {
@@ -1297,7 +1163,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
     const next = {
       x: point.x,
       y: point.y,
-      pressure: "pointerType" in event && event.pointerType === "pen" ? event.pressure : 0,
+      pressure: event.pointerType === "pen" ? event.pressure : 0,
       t: Math.round(performance.now() - started),
     };
     drafting.current = [...(drafting.current ?? []), next];
@@ -1328,11 +1194,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
     doc.commitStroke(closedPoints, fillStrokeStyle);
   };
 
-  const finish = (_event?: React.PointerEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    // Handle multi-touch end
-    if (pinchStartRef.current || twoFingerPanRef.current) {
-      handleTouchGesture({} as React.PointerEvent<HTMLCanvasElement>, "end");
-    }
+  const finish = () => {
     const active = gesture.current;
     gesture.current = null;
     // The selection may have moved away from the pointer, so the grab cursor
@@ -1487,34 +1349,11 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
   return (
     <div className="wm-board" data-testid="board">
-      {/* --- Mobile toolbar toggle & overlay --- */}
-      {isMobile && (
+      {/* --- Desktop menu strip (oculto en móvil via CSS) --- */}
+      {!isMobile && (
         <>
-          <button
-            type="button"
-            className="mobileToolbarToggle"
-            aria-label={toolbarOpen ? "Cerrar herramientas" : "Abrir herramientas"}
-            onClick={() => setToolbarOpen(!toolbarOpen)}
-            data-testid="mobile-toolbar-toggle"
-          >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              {toolbarOpen ? (
-                <path d="M18 6L6 18M6 6l12 12" />
-              ) : (
-                <path d="M3 12h18M3 6h18M3 18h18" />
-              )}
-            </svg>
-          </button>
-          <div
-            className={`mobileToolbarOverlay ${toolbarOpen ? "visible" : ""}`}
-            onClick={() => setToolbarOpen(false)}
-            aria-hidden="true"
-          />
-        </>
-      )}
-
-      {/* --- Left menu strip: 140px, tools ------------------- */}
-      <div id="menuStrip" className={isMobile && toolbarOpen ? "open" : ""}>
+        {/* --- Left menu strip: 140px, tools ------------------- */}
+        <div id="menuStrip">
         <button
           type="button"
           className="menu-button"
@@ -1642,6 +1481,40 @@ export function BoardSection({ boardId }: { boardId: string }) {
           onToggleChat={() => setChatOpen((open) => !open)}
         />
       </div>
+      </>
+      )}
+
+      {/* --- Mobile toolbar (solo en móvil) --- */}
+      {isMobile && (
+        <MobileToolbar
+          tool={tool}
+          setTool={setTool}
+          style={style}
+          drawStyle={drawStyle}
+          setStyle={setStyle}
+          setDrawStyle={setDrawStyle}
+          onUndo={undo}
+          onClear={clearAll}
+          isHost={isHost}
+          onImport={importMedia}
+          onToggleOptions={() => setOptionsOpen((o) => !o)}
+          optionsOpen={optionsOpen}
+          drawPanelOpen={drawPanelOpen}
+          setDrawPanelOpen={setDrawPanelOpen}
+          participants={board.participants}
+          search={search}
+          onSearchChange={setSearch}
+          settings={settings}
+          onSettingsChange={(patch) => {
+            const allowed = isHost
+              ? patch
+              : { ...patch, backgroundColor: settings.backgroundColor };
+            writeSettings(effectiveId, { ...settings, ...allowed });
+          }}
+          flipColors={flipColors}
+          onFlipColorsChange={setFlipColors}
+        />
+      )}
 
       {/* --- Canvas ------------------------------------------------------- */}
       <div className="wm-stage" ref={stageRef}>
@@ -1653,10 +1526,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
           onPointerMove={extend}
           onPointerUp={finish}
           onPointerCancel={finish}
-          onTouchStart={(e) => begin(e as unknown as React.PointerEvent<HTMLCanvasElement>)}
-          onTouchMove={(e) => extend(e as unknown as React.PointerEvent<HTMLCanvasElement>)}
-          onTouchEnd={(e) => finish(e as unknown as React.PointerEvent<HTMLCanvasElement>)}
-          onTouchCancel={(e) => finish(e as unknown as React.PointerEvent<HTMLCanvasElement>)}
           onWheel={handleWheel}
           onDoubleClick={(event) => {
             // On the canvas, a double click acts as a shortcut for the pencil.
@@ -1698,7 +1567,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
           })()}
       </div>
 
-      {drawPanelOpen && (
+      {!isMobile && drawPanelOpen && (
         <DrawPanel
           style={style}
           drawStyle={drawStyle}
@@ -1708,7 +1577,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
         />
       )}
 
-      {optionsOpen && (
+      {!isMobile && optionsOpen && (
         <OptionsMenu
           participants={board.participants}
           search={search}
