@@ -60,6 +60,44 @@ export function TrashIcon() {
 }
 
 /**
+ * The Import glyph.
+ *
+ * The source has no import button — here.fm's room does — so this is a small
+ * inline SVG: a picture with an arrow pointing into it, the way a file is
+ * brought onto a board.
+ */
+export function ImportIcon({ size = 32 }: { size?: number }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 32 32"
+      width={size}
+      height={size}
+      aria-hidden="true"
+    >
+      <rect
+        x="3.5"
+        y="5.5"
+        width="25"
+        height="21"
+        rx="3"
+        fill="none"
+        stroke="#4a4a4a"
+        strokeWidth="2"
+      />
+      <path
+        d="M16 9v9m0 0 4-4m-4 4-4-4"
+        fill="none"
+        stroke="#4a4a4a"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/**
  * Generated placeholder avatar.
  *
  * The source renders a `w-8 h-8` SVG when a user has no uploaded picture: two

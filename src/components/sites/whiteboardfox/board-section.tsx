@@ -11,11 +11,20 @@ import {
   UndoIcon,
 } from "./board-icons";
 import { DrawPanel } from "./draw-panel";
+import { ImportMenu } from "./import-menu";
+import { ItemMenu, type ItemMenuAction } from "./item-menu";
 import { OptionsMenu } from "./options-menu";
 import { RoomBar } from "./room-bar";
 import { RoomChatBar, RoomMessages, RoomReactions } from "./room-chat";
 import { markJoined, useBoard } from "./use-board";
+import { claimBoardHost, useBoardHost } from "./use-board-host";
 import { useBoardDoc } from "./use-board-doc";
+import {
+  useBoardSettings,
+  useFlipColors,
+  writeSettings,
+  type BoardSettings,
+} from "./use-board-settings";
 import { useDeviceUser, displayName } from "./use-device-user";
 import { useLobbyGate } from "./use-lobby-gate";
 import { usePro } from "./use-pro";
@@ -31,10 +40,20 @@ import {
   zoomAt,
   type Camera,
 } from "@/lib/board/camera";
+import { gridStep } from "@/lib/board/grid";
 import {
+  createImportedItem,
+  itemHitTest,
+  itemPlayButtonHit,
+  type ImportedItem,
+  type ImportedMedia,
+} from "@/lib/board/imported";
+import {
+  itemChromePositions,
   render,
   selectionBounds,
   selectionHandlePositions,
+  type ItemHandle,
   type SelectionBox,
   type Viewport,
   type LassoPath,
@@ -50,6 +69,10 @@ import {
   type StrokeStyle,
   type DrawStyle,
 } from "@/lib/board/stroke";
+import {
+  readBoardDocument,
+  saveBoardDocument,
+} from "@/lib/board/document";
 
 /**
  * Whiteboard surface.
@@ -128,8 +151,20 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const pro = usePro();
   const { ready } = useLobbyGate();
   const effectiveId = resolveBoardId(boardId);
-  const board = useBoard(effectiveId, user, pro);
+  /**
+   * The board's host.
+   *
+   * The device that opened the board first owns it — in practice the one that
+   * created it — and everybody else is a user. The host keeps the board's
+   * destructive tools: clearing it and changing its background colour.
+   */
+  const { hostId, isHost } = useBoardHost(effectiveId, user.id);
+  const board = useBoard(effectiveId, user, pro, hostId);
   const doc = useBoardDoc();
+  /** The board's own settings: background, grid, snapping and auto-save. */
+  const settings = useBoardSettings(effectiveId);
+  /** Whether this browser sees the board with inverted colours. */
+  const [flipColors, setFlipColors] = useFlipColors();
   /**
    * Whether the room's conversation is on screen.
    *
@@ -153,6 +188,17 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [zoomLabel, setZoomLabel] = useState("100%");
+  /**
+   * The three-dot menu of an imported item, and where it opens.
+   *
+   * The menu itself is HTML rather than canvas, so it can use real buttons and
+   * real text; the position is the screen position of the item's dots handle.
+   */
+  const [itemMenu, setItemMenu] = useState<{
+    id: string;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   /**
@@ -208,6 +254,24 @@ export function BoardSection({ boardId }: { boardId: string }) {
         lastScaleX: number;
         lastScaleY: number;
       }
+    /** Dragging an imported item around the board. */
+    | { kind: "item-move"; itemId: string; lastWorld: { x: number; y: number } }
+    /** Turning an imported item around its own centre. */
+    | {
+        kind: "item-rotate";
+        itemId: string;
+        center: { x: number; y: number };
+        startAngle: number;
+        startRotation: number;
+      }
+    /** Growing or shrinking an imported item. */
+    | {
+        kind: "item-scale";
+        itemId: string;
+        center: { x: number; y: number };
+        startDistance: number;
+        startScale: number;
+      }
     | null
   >(null);
   const rafPending = useRef(false);
@@ -221,6 +285,10 @@ export function BoardSection({ boardId }: { boardId: string }) {
    */
   const styleRef = useRef<StrokeStyle>(DEFAULT_STYLE);
   const drawStyleRef = useRef<DrawStyle>(DEFAULT_DRAW_STYLE);
+  /** The board's settings, mirrored for the paint loop. */
+  const settingsRef = useRef<BoardSettings>(settings);
+  /** Whether this browser flips the colours, mirrored for the paint loop. */
+  const flipColorsRef = useRef(flipColors);
   /**
    * The document's own refs, taken out of the returned object so the paint
    * loop can depend on them. `useBoardDoc` hands back a fresh object on every
@@ -228,11 +296,26 @@ export function BoardSection({ boardId }: { boardId: string }) {
    */
   const docStrokes = doc.strokes;
   const docSelectedIds = doc.selectedIds;
+  /** The imported media the board carries. */
+  const docItems = doc.items;
+  /** The imported item that is selected, if any. */
+  const docSelectedItemId = doc.selectedItemId;
+  /** The stage the canvas sits in; the item menu opens inside it. */
+  const stageRef = useRef<HTMLDivElement>(null);
+  /** The imported item that is playing, if any. */
+  const playingItemIdRef = useRef<string | null>(null);
+  /** The audio element that plays an imported clip. */
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     styleRef.current = style;
     drawStyleRef.current = drawStyle;
   }, [style, drawStyle]);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+    flipColorsRef.current = flipColors;
+  }, [settings, flipColors]);
 
   // Keep the minted id in the URL so the link is shareable and a reload reopens
   // the same board. `replaceState` is an external-system write, not state.
@@ -251,14 +334,65 @@ export function BoardSection({ boardId }: { boardId: string }) {
   }, [ready, effectiveId]);
 
   /**
+   * The first device to open a board owns it.
+   *
+   * The claim is permanent, so the device that created the board keeps it for
+   * good; a board that is opened by somebody else first is owned by whoever
+   * got there first.
+   */
+  useEffect(() => {
+    if (ready && effectiveId && user.id) {
+      claimBoardHost(effectiveId, user.id);
+    }
+  }, [ready, effectiveId, user.id]);
+
+  /**
+   * Restores the board's saved document.
+   *
+   * The restore is deferred by a tick: the board is still mounting, and the
+   * document should not be swapped under it in the same breath.
+   */
+  const importDocument = doc.importDocument;
+  useEffect(() => {
+    if (!ready || !effectiveId) {
+      return;
+    }
+    const saved = readBoardDocument(effectiveId);
+    if (!saved) {
+      return;
+    }
+    const timer = window.setTimeout(() => importDocument(saved), 0);
+    return () => window.clearTimeout(timer);
+  }, [ready, effectiveId, importDocument]);
+
+  /**
+   * Saves the board on the interval the Settings tab asks for.
+   *
+   * The document is the ink plus the imported media, so a board that is
+   * reopened comes back as it was left.
+   */
+  const exportDocument = doc.exportDocument;
+  useEffect(() => {
+    const seconds = Math.max(5, settings.autoSaveInterval);
+    const timer = window.setInterval(() => {
+      saveBoardDocument(effectiveId, exportDocument());
+    }, seconds * 1000);
+    return () => window.clearInterval(timer);
+  }, [effectiveId, exportDocument, settings.autoSaveInterval]);
+
+  /**
    * Paints one frame from the current refs.
    *
-   * Reads everything through refs, so the animation loop can keep the single
-   * closure it was created with and still draw the latest state.
+   * The painter lives for as long as the board does, and it is made during the
+   * first render. That is safe because everything it reads is a ref: a ref
+   * never changes identity, so a painter made once still draws the latest
+   * state of the document, the camera and the settings.
    */
-  const paint = useCallback(() => {
+  const [paint] = useState(() => () => {
     const canvas = canvasRef.current;
     const strokes = docStrokes.current;
+    const items = docItems.current;
+    const selectedItemId = docSelectedItemId.current;
     const draftingPoints = drafting.current;
 
     // The stroke being drawn is not in the document yet, so it is appended for
@@ -297,11 +431,18 @@ export function BoardSection({ boardId }: { boardId: string }) {
       camera: camera.current,
       viewport: viewport.current,
       strokes: display,
+      items,
+      selectedItemId,
+      playingItemId: playingItemIdRef.current,
+      background: settingsRef.current.backgroundColor,
+      flipColors: flipColorsRef.current,
+      showGrid: settingsRef.current.showGrid,
+      gridSize: settingsRef.current.gridSize,
       selection: box,
       lasso: lasso.current ?? null,
       cursor: cursor.current,
     });
-  }, [docStrokes, docSelectedIds]);
+  });
 
   const schedulePaint = useCallback(() => {
     if (rafPending.current) return;
@@ -422,6 +563,176 @@ export function BoardSection({ boardId }: { boardId: string }) {
     return false;
   };
 
+  /**
+   * Snaps a world point to the grid, when the board asks for it.
+   *
+   * The step is the one the grid is actually drawn with, so a snapped point
+   * always lands on a visible line.
+   */
+  const snapToGrid = (world: { x: number; y: number }) => {
+    if (!settingsRef.current.snapToGrid) {
+      return world;
+    }
+    const step = gridStep(camera.current.scale, settingsRef.current.gridSize);
+    return {
+      x: Math.round(world.x / step) * step,
+      y: Math.round(world.y / step) * step,
+    };
+  };
+
+  /**
+   * The imported item under a world point, if any.
+   *
+   * The last item of the list is the one in front, so the search runs
+   * backwards.
+   */
+  const itemAt = (worldX: number, worldY: number): ImportedItem | null => {
+    const items = docItems.current;
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      if (itemHitTest(items[index], worldX, worldY)) {
+        return items[index];
+      }
+    }
+    return null;
+  };
+
+  /** The selected imported item, if any. */
+  const selectedItem = (): ImportedItem | null => {
+    const id = docSelectedItemId.current;
+    if (!id) {
+      return null;
+    }
+    return docItems.current.find((item) => item.id === id) ?? null;
+  };
+
+  /**
+   * The small option under a screen point, if any.
+   *
+   * The options of a selected item — download, rotate, the three dots and the
+   * resize handle — sit in a row under the item, in screen space, so they
+   * keep their size at every zoom.
+   */
+  const itemHandleAt = (screenX: number, screenY: number): ItemHandle | null => {
+    const item = selectedItem();
+    if (!item) {
+      return null;
+    }
+    const chrome = itemChromePositions(camera.current, item);
+    const handles: { kind: ItemHandle; at: { x: number; y: number } }[] = [
+      { kind: "download", at: chrome.download },
+      { kind: "rotate", at: chrome.rotate },
+      { kind: "dots", at: chrome.dots },
+      { kind: "resize", at: chrome.resize },
+    ];
+    for (const handle of handles) {
+      if (Math.hypot(screenX - handle.at.x, screenY - handle.at.y) < 13) {
+        return handle.kind;
+      }
+    }
+    return null;
+  };
+
+  /** Opens the three-dot menu of an item, next to its dots handle. */
+  const openItemMenu = (item: ImportedItem) => {
+    const canvas = canvasRef.current;
+    const stage = stageRef.current;
+    if (!canvas || !stage) {
+      return;
+    }
+    const chrome = itemChromePositions(camera.current, item);
+    const canvasBox = canvas.getBoundingClientRect();
+    const stageBox = stage.getBoundingClientRect();
+    setItemMenu({
+      id: item.id,
+      x: canvasBox.left - stageBox.left + chrome.dots.x,
+      y: canvasBox.top - stageBox.top + chrome.dots.y,
+    });
+  };
+
+  /** Saves an imported item to the computer. */
+  const downloadItem = (item: ImportedItem) => {
+    const link = document.createElement("a");
+    link.href = item.src;
+    link.download = item.name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+  /** Plays an imported clip, or stops it when it is already playing. */
+  const togglePlayback = (item: ImportedItem) => {
+    if (!audioRef.current) {
+      const audio = new Audio();
+      audio.addEventListener("ended", () => {
+        playingItemIdRef.current = null;
+        schedulePaint();
+      });
+      audioRef.current = audio;
+    }
+    const audio = audioRef.current;
+    if (playingItemIdRef.current === item.id) {
+      audio.pause();
+      playingItemIdRef.current = null;
+      schedulePaint();
+      return;
+    }
+    audio.pause();
+    audio.src = item.src;
+    void audio.play().then(
+      () => {
+        playingItemIdRef.current = item.id;
+        schedulePaint();
+      },
+      () => {
+        playingItemIdRef.current = null;
+        schedulePaint();
+      },
+    );
+  };
+
+  /**
+   * What the user picked from an item's three-dot menu.
+   *
+   * Every one of these is a single undo step, like any other edit.
+   */
+  const handleItemAction = (action: ItemMenuAction) => {
+    const menu = itemMenu;
+    setItemMenu(null);
+    if (!menu) {
+      return;
+    }
+    const item = docItems.current.find((entry) => entry.id === menu.id);
+    if (!item) {
+      return;
+    }
+    doc.beginEdit();
+    switch (action) {
+      case "front":
+        doc.reorderItem(item.id, true);
+        break;
+      case "back":
+        doc.reorderItem(item.id, false);
+        break;
+      case "pin":
+        doc.updateItem(item.id, { pinned: !item.pinned }, false);
+        break;
+      case "lock":
+        doc.updateItem(item.id, { locked: !item.locked }, false);
+        break;
+      case "mirror":
+        doc.updateItem(item.id, { mirrored: !item.mirrored }, false);
+        break;
+      case "duplicate":
+        doc.duplicateItem(item.id);
+        break;
+      case "delete":
+        doc.removeItem(item.id);
+        break;
+    }
+    doc.endEdit();
+    schedulePaint();
+  };
+
   const begin = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return;
     try {
@@ -434,12 +745,91 @@ export function BoardSection({ boardId }: { boardId: string }) {
     const screen = screenPosition(event);
     const world = screenToWorld(camera.current, screen.x, screen.y);
 
+    /**
+     * The play button of an imported clip.
+     *
+     * It is a control of its own, so it answers whichever tool is active.
+     */
+    const playable = docItems.current.find((item) =>
+      itemPlayButtonHit(item, world.x, world.y),
+    );
+    if (playable) {
+      togglePlayback(playable);
+      return;
+    }
+
     if (tool === "move") {
       gesture.current = { kind: "pan", lastX: screen.x, lastY: screen.y };
       return;
     }
 
     if (tool === "select") {
+      /**
+       * The small options of the selected item come first: they sit on top of
+       * the item, so a press there must not pick the item up again.
+       */
+      const itemHandle = itemHandleAt(screen.x, screen.y);
+      if (itemHandle) {
+        const item = selectedItem();
+        if (!item) {
+          return;
+        }
+        if (itemHandle === "dots") {
+          openItemMenu(item);
+          return;
+        }
+        if (itemHandle === "download") {
+          downloadItem(item);
+          return;
+        }
+        if (item.locked) {
+          // A locked item keeps its place; it cannot be turned or resized.
+          return;
+        }
+        if (itemHandle === "rotate") {
+          doc.beginEdit();
+          gesture.current = {
+            kind: "item-rotate",
+            itemId: item.id,
+            center: { x: item.x, y: item.y },
+            startAngle: Math.atan2(world.y - item.y, world.x - item.x),
+            startRotation: item.rotation,
+          };
+          return;
+        }
+        doc.beginEdit();
+        gesture.current = {
+          kind: "item-scale",
+          itemId: item.id,
+          center: { x: item.x, y: item.y },
+          startDistance: Math.hypot(world.x - item.x, world.y - item.y) || 1,
+          startScale: item.scale,
+        };
+        return;
+      }
+
+      /**
+       * A press on an imported item picks it up.
+       *
+       * The item is selected first, so its small options appear, and the drag
+       * then moves it around the board.
+       */
+      const item = itemAt(world.x, world.y);
+      if (item) {
+        doc.selectItem(item.id);
+        setItemMenu(null);
+        if (!item.locked) {
+          doc.beginEdit();
+          gesture.current = {
+            kind: "item-move",
+            itemId: item.id,
+            lastWorld: world,
+          };
+        }
+        schedulePaint();
+        return;
+      }
+
       // A press on a handle starts a transform; anywhere else begins a lasso.
       const handle = handleAt(screen.x, screen.y);
       if (handle) {
@@ -476,6 +866,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
       // Anywhere else begins a lasso. The Select tool always selects, even
       // when the Draw panel happens to be set to a fill style.
+      doc.selectItem(null);
       lasso.current = { points: [world], done: false };
       gesture.current = { kind: "lasso", fillType: null };
       schedulePaint();
@@ -500,7 +891,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
     // Fill / Gradient Fill: work like lasso - draw closed shape, then fill it.
     if (drawStyle === "fill" || drawStyle === "gradient-fill") {
-      lasso.current = { points: [world], done: false };
+      const snapped = snapToGrid(world);
+      lasso.current = { points: [snapped], done: false };
       gesture.current = { kind: "lasso", fillType: drawStyle };
       schedulePaint();
       return;
@@ -508,10 +900,11 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
     // Draw (marker, fill, gradient-fill, calligraphy).
     gesture.current = { kind: "draw", startTime: performance.now(), drawStyle };
+    const start = snapToGrid(world);
     drafting.current = [
       {
-        x: world.x,
-        y: world.y,
+        x: start.x,
+        y: start.y,
         // The source passes a literal 0 pressure for mouse input.
         pressure: event.pointerType === "pen" ? event.pressure : 0,
         t: 0,
@@ -583,10 +976,64 @@ export function BoardSection({ boardId }: { boardId: string }) {
     }
 
     if (active.kind === "lasso") {
+      // A lasso that fills a shape follows the grid; one that selects does
+      // not, because it has to be able to catch a stroke exactly.
+      const point = active.fillType ? snapToGrid(world) : world;
       lasso.current = {
-        points: [...(lasso.current?.points ?? []), world],
+        points: [...(lasso.current?.points ?? []), point],
         done: false,
       };
+      schedulePaint();
+      return;
+    }
+
+    /**
+     * Dragging an imported item.
+     *
+     * The item follows the pointer one increment at a time, so it never drifts
+     * away from the cursor.
+     */
+    if (active.kind === "item-move") {
+      const item = docItems.current.find((entry) => entry.id === active.itemId);
+      if (!item) {
+        return;
+      }
+      const dx = world.x - active.lastWorld.x;
+      const dy = world.y - active.lastWorld.y;
+      active.lastWorld = world;
+      if (dx !== 0 || dy !== 0) {
+        doc.updateItem(item.id, { x: item.x + dx, y: item.y + dy }, true);
+        schedulePaint();
+      }
+      return;
+    }
+
+    /** Turning an imported item around its own centre. */
+    if (active.kind === "item-rotate") {
+      const angle = Math.atan2(
+        world.y - active.center.y,
+        world.x - active.center.x,
+      );
+      doc.updateItem(
+        active.itemId,
+        { rotation: active.startRotation + (angle - active.startAngle) },
+        true,
+      );
+      schedulePaint();
+      return;
+    }
+
+    /**
+     * Growing or shrinking an imported item.
+     *
+     * The factor is measured against where the pointer was when the drag
+     * began, so the item does not chase its own tail while it grows.
+     */
+    if (active.kind === "item-scale") {
+      const distance =
+        Math.hypot(world.x - active.center.x, world.y - active.center.y) || 1;
+      const scale = Math.max(0.05, active.startScale * (distance / active.startDistance));
+      doc.updateItem(active.itemId, { scale }, true);
       schedulePaint();
       return;
     }
@@ -650,9 +1097,10 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
     // Draw.
     const started = active.startTime;
+    const point = snapToGrid(world);
     const next = {
-      x: world.x,
-      y: world.y,
+      x: point.x,
+      y: point.y,
       pressure: event.pointerType === "pen" ? event.pressure : 0,
       t: Math.round(performance.now() - started),
     };
@@ -732,6 +1180,22 @@ export function BoardSection({ boardId }: { boardId: string }) {
       return;
     }
 
+    /**
+     * The imported item gestures.
+     *
+     * The live moves already mutated the document; committing them is one
+     * undo step, like any other edit.
+     */
+    if (
+      active?.kind === "item-move" ||
+      active?.kind === "item-rotate" ||
+      active?.kind === "item-scale"
+    ) {
+      doc.endEdit();
+      doc.bump();
+      return;
+    }
+
     if (active?.kind === "draw") {
       const points = drafting.current ?? [];
       drafting.current = null;
@@ -767,8 +1231,37 @@ export function BoardSection({ boardId }: { boardId: string }) {
     doc.undo();
   };
 
+  /**
+   * Clears the board.
+   *
+   * Only the host may do this: it throws away everything that is on the
+   * board, ink and imported media alike.
+   */
   const clearAll = () => {
+    if (!isHost) {
+      return;
+    }
     doc.clearAll();
+  };
+
+  /**
+   * Brings a piece of media onto the board.
+   *
+   * It lands in the middle of what the user is looking at, and it is selected
+   * straight away, so the small options under it are there to be used.
+   */
+  const importMedia = (media: ImportedMedia) => {
+    const centre = screenToWorld(
+      camera.current,
+      viewport.current.width / 2,
+      viewport.current.height / 2,
+    );
+    const item = createImportedItem(media, centre.x, centre.y);
+    doc.beginEdit();
+    doc.addItem(item);
+    doc.endEdit();
+    doc.selectItem(item.id);
+    schedulePaint();
   };
 
   const resetView = () => {
@@ -844,6 +1337,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
           </span>
         </button>
 
+        <ImportMenu onImport={importMedia} />
+
         <button
           type="button"
           className={`menu-button ${tool === "move" ? "gwt-ToggleButton-down" : ""}`}
@@ -897,7 +1392,12 @@ export function BoardSection({ boardId }: { boardId: string }) {
         <button
           type="button"
           className="menu-button"
-          title="Clear several drawing items in one action"
+          title={
+            isHost
+              ? "Clear several drawing items in one action"
+              : "Only the board host can clear the board"
+          }
+          disabled={!isHost}
           onClick={clearAll}
           data-testid="tool-clear"
         >
@@ -918,7 +1418,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
       </div>
 
       {/* --- Canvas ------------------------------------------------------- */}
-      <div className="wm-stage">
+      <div className="wm-stage" ref={stageRef}>
         <canvas
           ref={attachCanvas}
           id="canvasId"
@@ -948,6 +1448,23 @@ export function BoardSection({ boardId }: { boardId: string }) {
           hue={board.participants[0]?.avatarHue ?? 0}
           mic={mic}
         />
+
+        {itemMenu &&
+          (() => {
+            const item = docItems.current.find((entry) => entry.id === itemMenu.id);
+            if (!item) {
+              return null;
+            }
+            return (
+              <ItemMenu
+                item={item}
+                x={itemMenu.x}
+                y={itemMenu.y}
+                onAction={handleItemAction}
+                onClose={() => setItemMenu(null)}
+              />
+            );
+          })()}
       </div>
 
       {drawPanelOpen && (
@@ -966,6 +1483,18 @@ export function BoardSection({ boardId }: { boardId: string }) {
           search={search}
           onSearchChange={setSearch}
           onClose={() => setOptionsOpen(false)}
+          settings={settings}
+          onSettingsChange={(patch) => {
+            // The background colour belongs to the host: nobody else may change
+            // it, whatever the panel says.
+            const allowed = isHost
+              ? patch
+              : { ...patch, backgroundColor: settings.backgroundColor };
+            writeSettings(effectiveId, { ...settings, ...allowed });
+          }}
+          flipColors={flipColors}
+          onFlipColorsChange={setFlipColors}
+          isHost={isHost}
         />
       )}
 

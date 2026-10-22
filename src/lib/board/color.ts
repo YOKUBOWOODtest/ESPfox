@@ -155,3 +155,22 @@ export function luminance(hex: string): number {
   const { r, g, b } = hexToRgb(hex);
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 }
+
+/**
+ * The photographic negative of a colour: every channel is mirrored around the
+ * middle of its range.
+ *
+ * This is what "flip colours" does to the board — white becomes black, coral
+ * becomes cyan, and a picture becomes its negative. The alpha is left alone,
+ * so a transparent colour stays transparent.
+ */
+export function invertColor(hex: string): string {
+  const prefix = hex.startsWith("#") ? "#" : "";
+  const alpha = hex.length === 9 ? hex.slice(7, 9) : "";
+  const { r, g, b } = hexToRgb(hex.slice(0, 7));
+  const channel = (value: number) =>
+    Math.round(255 - Math.min(255, Math.max(0, value)))
+      .toString(16)
+      .padStart(2, "0");
+  return `${prefix}${channel(r)}${channel(g)}${channel(b)}${alpha}`;
+}

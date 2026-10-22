@@ -23,9 +23,15 @@ export const MAJOR_EVERY = 5;
 export const GRID_MINOR_COLOR = "#e8e8e8";
 export const GRID_MAJOR_COLOR = "#d5d5d5";
 
-/** World-space grid step that keeps on-screen spacing legible at this zoom. */
-export function gridStep(scale: number): number {
-  let step = BASE_STEP;
+/**
+ * World-space grid step that keeps on-screen spacing legible at this zoom.
+ *
+ * `base` is the board's own grid size, which the Settings tab can change; the
+ * doubling rule still applies on top of it, so a small grid does not turn into
+ * a solid block when the user zooms out.
+ */
+export function gridStep(scale: number, base: number = BASE_STEP): number {
+  let step = base > 0 ? base : BASE_STEP;
   // Doubling (not free scaling) keeps lines on a stable lattice, so they do not
   // shimmer or slide as the zoom changes.
   while (step * scale < MIN_SCREEN_STEP) {
@@ -51,8 +57,9 @@ export function gridLines(
   camera: Camera,
   viewportWidth: number,
   viewportHeight: number,
+  base: number = BASE_STEP,
 ): GridLines {
-  const step = gridStep(camera.scale);
+  const step = gridStep(camera.scale, base);
 
   // World bounds of the viewport.
   const worldLeft = camera.x;

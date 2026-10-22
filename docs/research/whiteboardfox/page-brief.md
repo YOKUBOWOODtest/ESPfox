@@ -16,7 +16,7 @@ Target: `https://whiteboardfox.com` → canonical page `https://r8.whiteboardfox
 | `/options.jsp` | `/options` | `src/app/options/page.tsx` |
 | `/privacy.html` | `/privacy` | `src/app/privacy/page.tsx` (rebuilt locally) |
 | `/terms.html` | `/terms` | `src/app/terms/page.tsx` (rebuilt locally) |
-| `/post/<id>` | `/board/post-<id>` | gallery cards now open the local board |
+| `/post/<id>` | `/board/post-<id>` | the board id a gallery card used to link to |
 
 Source routes with no local counterpart, deleted rather than left as dead links: `/pricing` and `/login`.
 ## Brand palette (replaces the source blue)
@@ -53,6 +53,10 @@ Source routes with no local counterpart, deleted rather than left as dead links:
 - **Gallery tabs removed.** The page always renders the post grid; there is no `#top-posts-tab`, no `#followers-posts-tab` and no "Sign in to check out posts" notice.
 - **Pro changes the options panel.** Non-Pro still sends `force-auth-participants=true`; Pro sends `false`. `my followers` is disabled everywhere (no followers concept).
 - **The board is also a room.** Whiteboard Mod mixes whiteboardfox (the drawing) with here.fm (the room): a room bar under the board's **Clear** button (invite, chat, reaction, mic) and a here.fm-style chat bar along the bottom of the board. See *Room layer* below.
+- **The board has a host.** The device that opens a board first owns it and is shown as the **Host** in the participants list; everybody else is a **user**. The host clears the board and paints its background colour. The claim is stored in `localStorage` under `wf_board_hosts` as `{boardId: deviceId}` and the first claim wins, so the host cannot be displaced. See *The board's options* below.
+- **The board carries media.** An **Import** button under **Erase** brings in a picture, a file, an audio file or a recorded voice note, and every imported piece is editable the way here.fm's elements are. See *Importing media* below.
+- **The board's options really work.** The Options panel is now Colours / Participants / Settings: *Colours* holds **BG color**, the board's own colour (the source's "Quick Colours" row is gone); *Settings* holds **Show grid**, **Snap to grid**, **Grid size**, **Auto-save interval** and **Flip colors**, which replaces the source's *Dark mode*. See *The board's options* below.
+- **The homepage has no gallery.** The source's snapshot grid, its pagination, its like toggle and its 36 thumbnails were deleted, together with `gallery.tsx`, `gallery-data.ts` and the `GalleryPost` type. The page is now the hero, the Options overlay and the feature strip.
 
 ## Hero (measured at 800px viewport, source)
 
@@ -81,7 +85,9 @@ Source behaviour, recorded for reference: when cookie `user_type` is `NA` the pr
 
 **Whiteboard Mod does not reproduce this.** `Start Drawing` opens the Options overlay immediately (or sends an unidentified device to the Lobby), so the form is always the visible state. `use-user-type.ts`, `icons.tsx` and the `wf_user_type` key were deleted.
 
-## Gallery
+## Gallery — **removed in this build**
+
+The measurements below are the source's, kept for the record. **Whiteboard Mod does not reproduce the gallery**: the component, its data, its types and its 36 thumbnails were deleted (`gallery.tsx`, `gallery-data.ts`, `src/types/whiteboardfox.ts`, `public/sites/whiteboardfox/gallery/*`), and `src/app/page.tsx` no longer renders it. The homepage is the hero, the Options overlay and the feature strip only. The route map's `/post/<id>` row survives as the board id the cards used to link to.
 
 - Container `max-w-5xl mx-auto flex flex-wrap gap-4`, but nested in the 1010px column with `padding: 0 50px 10px 50px` → 910px wide, 66→944px (measurements at 800px vw), top at y=647.
 - Tabs: `ul` with two `li` (`w-full sm:flex`), `my-6` → 64px tall, buttons `p-4` + `border-b-2`; active = `border-[#5272bc] text-[#5272bc]`, inactive = `border-gray-200` (+ inherited `text-gray-700` from the `ul`).
@@ -113,7 +119,7 @@ Measured from the live reference `https://r9.whiteboardfox.com/96635256-2598-448
 | Element | Source | Clone |
 | --- | --- | --- |
 | `#menuStrip` | 0,0 140×700, `#EEEEEE`, absolute | 0,0 140×700, `rgb(238,238,238)`, fixed parent |
-| Menu buttons | seven 140×70 at y 0…420 | seven 140×70 at y 0…420 |
+| Menu buttons | seven 140×70 at y 0…420 | eight 140×70 at y 0…490 — the source's seven, plus **Import** under Erase |
 | Button label | 13px, `color:#000` | 13px, `rgb(0,0,0)` |
 | Active tool | `1px inset #666666` | `1px inset rgb(102,102,102)` |
 | `#canvasId` | 140,0 860×700 | 140,0 860×648² |
@@ -158,20 +164,50 @@ Measured on the clone at a 1000×700 viewport:
 
 | Element | Clone |
 | --- | --- |
-| Room bar | 140 wide at x=0, y=490…582 — directly under the Clear button (y=420…490) |
-| Room buttons | four 30×30 circles, `rgb(224,83,63)`, `border-radius: 50%`, at x = 4 / 38 / 72 / 106, y = 526 |
-| Mic meter | 132×6 at (4, 564) |
+| Room bar | 140 wide at x=0, y=560…652 — directly under the Clear button (y=490…560) |
+| Room buttons | four 30×30 circles, `rgb(224,83,63)`, `border-radius: 50%`, at x = 4 / 38 / 72 / 106, y = 596 |
+| Mic meter | 132×6 at (4, 634) |
 | Chat bar | 860×52 at (140, 648) — the canvas is 52px shorter than the viewport, so the bar never covers a drawing |
 | Chat input | 320×32 at (595, 659); **Send** at (925, 659) |
 | Message bubbles | 320 wide, right-floated at x=664 |
 
 The room is stored per board in `localStorage` under `wf_room_<boardId>` and mirrored to the other tabs of the same browser through the `storage` event.
 
+## The board's options
+
+The Options panel used to be a copy of the source's *Opciones* modal. It is now three tabs, and every control in it does something:
+
+| Tab | Control | What it does |
+| --- | --- | --- |
+| Colours | **BG color** | Paints the whole board behind the ink and the grid. The source's "Quick Colours" row is gone — the artist's colour wheel is the only control, and it is bound to the board itself rather than to the next stroke. |
+| Participants | the users list | Moved here from the toolbar; each row now carries its role (**Host** or user). |
+| Settings | **Show grid** | Draws or hides the infinite grid. |
+| Settings | **Snap to grid** | Makes a stroke, a fill and a lasso point land on the grid lines. |
+| Settings | **Grid size** | The base step of the grid, in world units (80 by default). The on-screen step still doubles itself when the zoom would make the grid too dense. |
+| Settings | **Auto-save interval** | How often the board writes itself out, in seconds (30 by default, never below 5). |
+| Settings | **Flip colors** | Replaces the source's *Dark mode*. The board becomes its photographic negative — white becomes black, coral becomes cyan, a picture becomes its negative — and it is **personal**: only the device that switched it on sees the negative. |
+
+The board's own settings (background colour, grid, snapping, grid size, auto-save interval) live in `localStorage` under `wf_board_settings_<boardId>` and are shared by every tab of that board. **Flip colors** lives under `wf_flip_colors`, because it is a view of the board and not a property of it.
+
+**BG color belongs to the host alone.** The guard sits in three places, so it cannot be talked around: the colour wheel refuses to speak back when it is disabled, the board's settings handler drops any `backgroundColor` change that does not come from the host, and a guest sees the wheel greyed out with the note "Only the board host can change the background colour."
+
+The board also saves itself: the strokes and the imported media are written to `localStorage` under `wf_board_document_<boardId>` (4 MB cap) on the auto-save interval, and read back when the board is opened again.
+
+## Importing media
+
+Under **Erase** there is an **Import** button. Its menu carries here.fm's three ways in — **Image or file**, **Audio** and **Record voice note** — and leaves out here.fm's fourth, *Share Web App*, which has no meaning on a whiteboard. A picture lands in the middle of what the user is looking at, selected, with its small options underneath.
+
+An imported piece is not a stroke, so it carries its own geometry: its centre, its intrinsic size, a uniform `scale` and a `rotation`. That is what lets the panel show a size and an angle, and what lets the undo history restore a transformed item by value. A transform is one undo step, like any other edit.
+
+The options under a selected item are the ones here.fm shows, drawn on the canvas in screen space so they keep their size at every zoom: **Download**, **Rotate**, the **three dots** and **Resize**. The rotate handle spins the item around its centre; the resize handle grows it uniformly around its centre (the drag measures the ratio of the pointer's distance to the item's centre, so the item does not chase its own tail while it grows).
+
+The three-dot menu carries here.fm's list — *Move to front*, *Move to back*, *Pin*, *Lock*, *Mirror*, *Duplicate* and a red *Delete* — minus *Make Deck*, which is a here.fm feature with no meaning here, and with the lock's submenu collapsed into a single flag. A locked item cannot be moved, turned or grown.
+
 ## Verification
 
 `npm run check` passes: ESLint clean, `tsc --noEmit` clean, `next build` prerenders 8 static routes (`/`, `/pro`, `/account`, `/lobby`, `/options`, `/privacy`, `/terms`, `/_not-found`) plus the dynamic `/board/[id]`.
 
-A headless-Chrome-over-CDP regression (`scripts/board-canvas-check.mjs`) asserts the canvas pixel buffer end to end — buffer sizing, marker colour/width, the live preview, `Rellenar`, the gradient settings, the Select tool (drag, scale, undo) and the whole room layer. It is **46/46 green**.
+A headless-Chrome-over-CDP regression (`scripts/board-canvas-check.mjs`) asserts the canvas pixel buffer end to end — buffer sizing, marker colour/width, the live preview, `Rellenar`, the gradient settings, the Select tool (drag, scale, undo), the whole room layer, the host's rights, the board settings and the imported items. It is **68/68 green**.
 
 Geometry re-measured on the clone at a 1000px viewport against the source's numbers:
 
@@ -182,19 +218,19 @@ Geometry re-measured on the clone at a 1000px viewport against the source's numb
 | Subtitle top | 317 | 317 |
 | `#startDrawingButton` | 370×72, 28px/42px | 370×72, 28px/42px |
 | Whiteboard-ID row | 163×28.4 | 163×28.4 |
-| Tab strip | 910×64 @ y 635 | 910×64 @ y 635 |
-| `#posts-container` | 878×831.1 @ (66,753) | 878×831.1 @ (66,723)¹ |
-| Card | 260.6×177.8, radius 6px | 260.6×177.8, radius 6px |
-| Card thumbnail | 258.6×135.8 | 258.6×135.8 |
-| Pagination | 878×34 | 878×34 |
+| Tab strip | 910×64 @ y 635 | **removed with the gallery** |
+| `#posts-container` | 878×831.1 @ (66,753) | **removed with the gallery** |
+| Card | 260.6×177.8, radius 6px | **removed with the gallery** |
+| Card thumbnail | 258.6×135.8 | **removed with the gallery** |
+| Pagination | 878×34 | **removed with the gallery** |
 
-¹ 30px higher because the source's ad iframe adds height above the gallery; the ad itself is not reproduced.
+¹ The gallery rows are the source's, recorded before the gallery was deleted from this build.
 
 ² The clone's canvas is 52px shorter than the source's because the here.fm-style chat bar is part of the board's layout, not an overlay — it must never cover a drawing.
 
-Pixel-diff (`docs/design-references/comparison.png`) residuals sit at y 400–499 (29%) and y 600–699 (28%). Those bands are the intentionally empty ad column (`#FCFCFC`) and the ad-driven vertical offset, plus font rasterisation differences and the gallery thumbnails' own pixel content — not layout drift.
+Pixel-diff (`docs/design-references/comparison.png`) residuals sit at y 400–499 (29%) and y 600–699 (28%). Those bands are the intentionally empty ad column (`#FCFCFC`) and the ad-driven vertical offset, plus font rasterisation differences and the gallery thumbnails' own pixel content — not layout drift. The gallery's own band disappears entirely once the gallery is gone.
 
-Interactions verified live in the browser:
+Interactions verified live in the browser (the source's, before this build's changes — the three gallery entries are the source's own, and the gallery is no longer part of the clone):
 
 - **Start Drawing** → options overlay becomes visible (480×361 at x=150, `#eeeeee`, `5px 5px 30px #333`).
 - **First visit** → the "How will you use Whiteboard Fox?" question shows in place of the form.
@@ -207,7 +243,7 @@ Interactions verified live in the browser:
 
 Interactions verified for the local customisations:
 
-- **Gallery cleanup** → `#top-posts-tab` and `#followers-posts-tab` are absent; 12 cards render; no "Sign in to check out posts" text anywhere.
+- **Gallery removal** → the homepage renders no gallery at all: no `#posts-container`, no card, no pagination and no thumbnail request; the deleted `gallery-data.ts` and `GalleryPost` type are gone with it. There are still 0 links to `whiteboardfox.com` anywhere in the app.
 - **Header** → the only nav link is `Lobby → /lobby`; no `Pricing`, `Sign In` or pro link exists.
 - **First run** → a device with no `wf_nickname` gets `#profileEl` visible, a minted `wf_device_id`, the "Elige un apodo" copy, and exactly one editable input (`#nickname`).
 - **Saving a nickname** → persists to `wf_nickname`, updates the header chip to `@Zorro`, closes the panel. Saving with no edit does not clear it.
@@ -225,20 +261,20 @@ Verified for this round's changes:
 - **Start Drawing, with profile** → `#optionsEl` becomes `visible` with no `[data-testid="user-type-query"]` and no fun/work buttons; the form is the visible state.
 - **Create Whiteboard** → lands on `/board/<minted id>`; `wf_joined_boards` gains the entry.
 - **Board identity** → the board inherits the stored nickname; the users panel's first row is `<nickname> (You)` and `.userName` resolves to `rgb(0, 102, 204)`.
-- **Board geometry (vs. the reference board)** → `#menuStrip` measures 140×700 at (0,0) with `background-color: rgb(238, 238, 238)` in `column` flow; `#canvasId` measures 860×648 at x=140 (648 = 700 − the 52px chat bar); the seven `.menu-button`s are 140×70 at y = 0, 70, 140, 210, 280, 350, 420 with 13px labels; the active tool carries `1px inset rgb(102, 102, 102)`.
+- **Board geometry (vs. the reference board)** → `#menuStrip` measures 140×700 at (0,0) with `background-color: rgb(238, 238, 238)` in `column` flow; `#canvasId` measures 860×648 at x=140 (648 = 700 − the 52px chat bar); the eight `.menu-button`s are 140×70 at y = 0, 70, 140, 210, 280, 350, 420, 490 with 13px labels (the source's seven, plus **Import** under Erase); the active tool carries `1px inset rgb(102, 102, 102)`.
 - **Board palette** → clicking `Draw` opens `[data-testid="colorsPanel"]` (7 cells, 70×70, 1px solid black border on `rgb(238,238,238)`), and the seven `path[fill]` values equal the live DOM's `#4a4a4aff`, `#2761a4ff`, `#44bff2ff`, `#c1086cff`, `#98bb13ff`, `#ac90e3ff`, `#e6b82eff`.
 - **Board users panel** → rows are 60px with a `.avatar-container` SVG (`#FFFFFF88` + `hsl(h, 75%, 43%)` circles), status dots resolve to `rgb(0, 192, 4)` (online) and `rgb(131, 94, 255)` (pro), `.usersScrollArea` / `#usersTable` / `.usersSearchBox` are present, and both `.whoDrewBtn`s read `Who drew what?` and `Search user`.
-- **Board drawing** → a synthetic pointer drag paints 1870 pixels on `#canvasId`; `Undo` returns the alpha channel to 0.
+- **Board drawing** → a synthetic pointer drag paints 1870 pixels on `#canvasId`; `Undo` puts the board's own background colour back (the canvas is opaque now — it paints the board's colour rather than leaving the page's white behind).
 - **Select-tool scaling** → dragging the top handle of a selected 100×100 rectangle up by 100px moves the ink from `[120,700]–[219,799]` to `[120,600]–[219,799]`: the bottom edge stays exactly where it was and the top follows the pointer, with no sign of a flip. Dragging the SE corner of a 160×100 rectangle outward by `(+40,+40)` grows it to `[120,700]–[319,839]` — the **opposite (NW) corner stays at `[120,700]`**.
 - **Undo after a Select-tool change** → Undo puts the scaled rectangle back at `[120,700]–[219,799]`, and it puts a shape that was dragged 60px right back from `[180,700]–[279,799]` to `[120,700]–[219,799]`. The undo history is a list of pre-edit snapshots (50 deep), and a gesture captures one at its start and keeps it only if the document really changed, so one drag is one undo step.
 - **Board deep link** → visiting `/board/<id>` directly renders the board (no `board-gate`) and inherits the stored nickname and id.
 - **Board share link** → `[data-testid="board-share-path"]` reads `https://whiteboardmod.com/board/<id>`.
 - **Lobby recent list** → after visiting a board, the Lobby lists it as a `/board/<id>` link.
 - **New board from the Lobby** → clicking `Crear pizarrón` rewrites `/board/new` to `/board/<minted id>` via `replaceState`, and the new board's share link uses the minted id.
-- **Gallery** → the first card's href is `/board/post-1487764`; there are 0 links to `whiteboardfox.com` anywhere in the app.
+- **Gallery** → the gallery is gone from the page, so there is no card to follow; there are 0 links to `whiteboardfox.com` anywhere in the app.
 - **Footer** → `Privacy Policy` → `/privacy` and `Terms of Service` → `/terms`, both rendering locally with the real chrome.
 - **Removed UI** → no `Pricing` / `Sign In` links, no `a[href="/pricing"]` / `a[href="/login"]`, no login text, no fun/work text.
-- **Room bar** → `[data-testid="room-bar"]` measures 140 wide at y=490, exactly where the Clear button ends; the four controls (invite, chat, emoji, mic) are 30×30 circles in `rgb(224,83,63)` at x = 4/38/72/106, with the level meter underneath.
+- **Room bar** → `[data-testid="room-bar"]` measures 140 wide at y=560, exactly where the Clear button ends (y=490…560); the four controls (invite, chat, emoji, mic) are 30×30 circles in `rgb(224,83,63)` at x = 4/38/72/106, y = 596, with the level meter underneath at (4, 634).
 - **Invite** → the popover opens below the button and `[data-testid="room-invite-link"]` reads `https://whiteboardmod.com/board/<id>` — the board's own address.
 - **Chat** → typing in `[data-testid="room-chat-input"]` and pressing **Send** renders one bubble with the text, and `localStorage` gains exactly one `wf_room_*` key.
 - **Reaction** → picking an emoji puts one `[data-testid="room-reaction"]` element floating over the canvas.
@@ -247,19 +283,27 @@ Verified for this round's changes:
 - **Unread badge** → a message injected into the room while the chat is closed badges the Chat button with `1`; opening the chat clears it.
 - **Cross-tab** → a message sent in one tab appears in the other through the `storage` event.
 
+Verified for the options, the host and the imports:
+
+- **Options panel** → `[data-testid="tool-options"]` opens a panel with three tabs — `options-tab-colours`, `options-tab-participants` and `options-tab-settings`. The Colours tab holds **BG color** (the artist's wheel, bound to the board) and no "Quick Colours" row; the Settings tab holds *Show grid*, *Snap to grid*, *Grid size*, *Auto-save interval* and *Flip colors*; there is no *Dark mode* anywhere.
+- **The host** → the device that opened the board is stored in `wf_board_hosts` as `{ "PREVIEW-TEST-01": "WM-A3F9-2C71" }`, the participants list marks it **Host**, and its **Clear** button is enabled. A second device (`WM-OTHER-7788`) finds the Clear button disabled, with the title "Only the board host can clear the board".
+- **BG color** → the host typed `#ffeedd` and the canvas reads `rgb(255,238,221)`, with the colour stored under `wf_board_settings_PREVIEW-TEST-01`. The guest's wheel carries `data-disabled="true"`, the panel shows "Only the board host can change the background colour.", and the guest's attempt to type `00FF00` leaves the canvas untouched.
+- **Flip colors** → the same background reads `rgb(0,17,34)` with the flip on — the exact negative — and `rgb(255,238,221)` with it off.
+- **The grid** → a line at x=80 reads `rgb(232,232,232)`; with *Show grid* off the same pixel is the background colour again. A fill lassoed over world (907,641)–(1017,741) with *Snap to grid* on landed on `[880,640]–[1039,719]`, the 80-unit lattice.
+- **Import** → the **Import** button sits directly under **Erase** in the strip, and its menu offers *Image or file*, *Audio* and *Record voice note*.
+- **An imported picture** → a 120×120 magenta PNG landed at `[620,389]–[739,508]`, the middle of the board, with its coral options row drawn 26px under it. The resize handle grew it to `[560,329]–[799,568]` (240×240, exactly double) and the rotate handle turned it to `[511,280]–[848,617]` (337×337, a 45° swing). Two Undo presses put it back at `[620,389]–[739,508]`.
+- **The three-dot menu** → it opens on the item's dots handle with *Move to front*, *Move to back*, *Pin*, *Lock*, *Mirror*, *Duplicate* and *Delete*; *Delete* leaves no magenta pixel on the canvas.
+
 ## Not reproduced (disclosed)
 
 - Ad slots (`#home-ad`, Fuse/publift), Tawk.to chat widget, Facebook SDK, Firebase auth/UI, Google Analytics — third-party scripts with no local equivalent.
 - The invitation banner (`#invite-banner-template`) depends on `GET /api/getInvitation`; only reachable when the server reports an outstanding invite.
 - The `user_type` cookie is no longer used: the fun/work question was removed, so `wf_user_type` is gone.
 - **Authentication is replaced, not reproduced.** The source's `login.jsp` / Firebase sign-in flow is gone; identity is the `wf_device_id` device id and the Lobby is the only entry point. This is intentional per the local customisations above — it is what allows `force-auth-participants=false` so invited participants need no account.
-- **The board is not networked.** There is no collaboration server: strokes live in a ref and are not persisted or shared, and the other participants are deterministic demo rows derived from a hash of the board id. The screen itself is an identical copy — only the transport is missing. `Create Whiteboard` / `More Options` no longer hand off to the source's `diagramName` / `options.jsp`.
+- **The gallery is gone.** The source's snapshot grid, its live origin-locked API (`GET /api/gallery-posts?page=<n>&type=TOP`, `totalCount: 1909` → 160 pages), its like toggle, its *Report NSFW* menu and its 36 thumbnails were all deleted rather than reimplemented. The homepage keeps the hero, the Options overlay and the feature strip.
+- **The board is not networked.** There is no collaboration server: the strokes and the imported media live in the document and are written to `localStorage` on the auto-save interval — so a board survives a reload in the same browser — but they are never shared, and the other participants are deterministic demo rows derived from a hash of the board id. The screen itself is an identical copy — only the transport is missing. `Create Whiteboard` / `More Options` no longer hand off to the source's `diagramName` / `options.jsp`.
 - **The room is browser-local.** here.fm talks over a websocket; here the conversation and reactions live in `localStorage` and reach the other tabs of the *same* browser through the `storage` event. Two people on two machines do not share a room yet, and the microphone is a local level meter rather than a voice stream.
 - **Board pan/zoom, lasso, per-item erase and `Who drew what?` are not functional.** They require the GWT engine and the server-side document. The buttons reproduce the original's appearance and active state; drawing, undo and clear work.
 - **The fun/work branch was deleted.** `wf_user_type`, `use-user-type.ts` and the two glyph icons are gone; the Options overlay has one path.
 - **Pro is client-only.** `wf_pro` lives in `localStorage`: activation is per-device, syncs nowhere, and does not contact the live site. There is no plan, price, billing or gateway.
-- **Gallery data is a static capture.** The source pages through a live, origin-locked API (`GET /api/gallery-posts?page=<n>&type=TOP`, `totalCount: 1909` → 160 pages) and refetches on every page change. The clone embeds 36 real snapshots (pages 1–3) as `gallery-data.ts` and cycles them, so the pagination control still reads `of 160` and behaves like the original; only the first three pages carry their true content.
-- The **like count** stays empty, matching the source: its `.post-like-count` is written inside an `if (false)` guard, so the live page never renders a number either.
-- The **card description** stays empty for the same reason — the source's `.post-description` is also behind an `if (false)` guard.
-- The **Report NSFW** menu item opens the menu but does not submit a report; the source posts to an authenticated endpoint.
 - `Create Whiteboard` creates a **local** board at `/board/new`; `More Options` links to the local `/options`. Neither hands off to the original site any more.

@@ -14,6 +14,7 @@ import {
   type StrokeStyle,
   type Transform,
 } from "@/lib/board/stroke";
+import type { ImportedItem } from "@/lib/board/imported";
 
 /**
  * Board document.
@@ -31,12 +32,18 @@ const HISTORY_LIMIT = 50;
 /** The document as it was before an edit, so undo can come back to it. */
 interface DocSnapshot {
   strokes: Stroke[];
+  items: ImportedItem[];
   selectedIds: Set<string>;
+  selectedItemId: string | null;
 }
 
 export function useBoardDoc() {
   const strokes = useRef<Stroke[]>([]);
   const selectedIds = useRef<Set<string>>(new Set());
+  /** The imported media the board carries. */
+  const items = useRef<ImportedItem[]>([]);
+  /** The imported item that is selected, if any. */
+  const selectedItemId = useRef<string | null>(null);
   /** Bumped whenever the document changes, so the canvas effect re-runs. */
   const [version, setVersion] = useState(0);
   /**
@@ -61,7 +68,9 @@ export function useBoardDoc() {
       ...stroke,
       transform: { ...stroke.transform },
     })),
+    items: items.current.map((item) => ({ ...item })),
     selectedIds: new Set(selectedIds.current),
+    selectedItemId: selectedItemId.current,
   }), []);
 
   /**
@@ -88,7 +97,9 @@ export function useBoardDoc() {
     }
     const unchanged =
       before.strokes.length === strokes.current.length &&
-      before.strokes.every((stroke, index) => stroke === strokes.current[index]);
+      before.strokes.every((stroke, index) => stroke === strokes.current[index]) &&
+      before.items.length === items.current.length &&
+      before.items.every((item, index) => item === items.current[index]);
     if (unchanged) {
       return;
     }
@@ -156,6 +167,10 @@ export function useBoardDoc() {
         }
       }
       selectedIds.current = ids;
+      // Picking up ink puts the imported media down.
+      if (ids.size > 0 && selectedItemId.current !== null) {
+        selectedItemId.current = null;
+      }
       bump();
       return ids.size;
     },
@@ -169,6 +184,111 @@ export function useBoardDoc() {
     selectedIds.current = new Set();
     bump();
   }, [bump]);
+
+  /* --- Imported items ----------------------------------------------------- */
+
+  /**
+   * Adds an imported item.
+   *
+   * Like every other edit to the document, this is one undo step: the caller
+   * wraps it in `beginEdit` and `endEdit`.
+   */
+  const addItem = useCallback(
+    (item: ImportedItem) => {
+      items.current = [...items.current, item];
+      bump();
+    },
+    [bump],
+  );
+
+  /**
+   * Changes an imported item.
+   *
+   * `live` controls whether the version counter is bumped: during a drag the
+   * caller repaints from the animation loop instead.
+   */
+  const updateItem = useCallback(
+    (id: string, patch: Partial<ImportedItem>, live: boolean) => {
+      items.current = items.current.map((item) =>
+        item.id === id ? { ...item, ...patch } : item,
+      );
+      if (!live) {
+        bump();
+      }
+    },
+    [bump],
+  );
+
+  /** Removes an imported item and forgets its selection. */
+  const removeItem = useCallback(
+    (id: string) => {
+      const remaining = items.current.filter((item) => item.id !== id);
+      if (remaining.length === items.current.length) {
+        return;
+      }
+      items.current = remaining;
+      if (selectedItemId.current === id) {
+        selectedItemId.current = null;
+      }
+      bump();
+    },
+    [bump],
+  );
+
+  /** Copies an imported item, offset a little so both stay visible. */
+  const duplicateItem = useCallback(
+    (id: string) => {
+      const source = items.current.find((item) => item.id === id);
+      if (!source) {
+        return;
+      }
+      const copy: ImportedItem = {
+        ...source,
+        id: `${source.id}-copy-${items.current.length}`,
+        x: source.x + 24,
+        y: source.y + 24,
+        createdAt: Date.now(),
+      };
+      items.current = [...items.current, copy];
+      selectedItemId.current = copy.id;
+      bump();
+    },
+    [bump],
+  );
+
+  /** Sends an imported item to the front or to the back of the stack. */
+  const reorderItem = useCallback(
+    (id: string, toFront: boolean) => {
+      const source = items.current.find((item) => item.id === id);
+      if (!source) {
+        return;
+      }
+      const rest = items.current.filter((item) => item.id !== id);
+      items.current = toFront ? [...rest, source] : [source, ...rest];
+      bump();
+    },
+    [bump],
+  );
+
+  /**
+   * Selects an imported item.
+   *
+   * The ink and the media are two different selections: picking up a picture
+   * puts the stroke selection down.
+   */
+  const selectItem = useCallback(
+    (id: string | null) => {
+      if (selectedItemId.current === id) {
+        return;
+      }
+      selectedItemId.current = id;
+      if (id !== null && selectedIds.current.size > 0) {
+        selectedIds.current = new Set();
+      }
+      bump();
+    },
+    [bump],
+  );
 
   const selectedStrokes = useCallback(
     () => strokes.current.filter((stroke) => selectedIds.current.has(stroke.id)),
@@ -228,6 +348,47 @@ export function useBoardDoc() {
    * of the history — a change made with the Select tool, whether it moved,
    * scaled or rotated the selection.
    */
+  /**
+   * The document, as it is saved.
+   *
+   * The auto-save writes this to the browser's storage; the strokes and the
+   * imported media are copied, so a later edit cannot change what was saved.
+   */
+  const exportDocument = useCallback(
+    () => ({
+      strokes: strokes.current.map((stroke) => ({
+        ...stroke,
+        points: stroke.points.map((point) => ({ ...point })),
+        style: { ...stroke.style },
+        transform: { ...stroke.transform },
+      })),
+      items: items.current.map((item) => ({ ...item })),
+    }),
+    [],
+  );
+
+  /**
+   * Restores a saved document.
+   *
+   * The history is left alone: a board that is reopened starts with a clean
+   * undo history rather than one full of steps the user never took.
+   */
+  const importDocument = useCallback(
+    (document: { strokes: Stroke[]; items: ImportedItem[] }) => {
+      strokes.current = document.strokes.map((stroke) => ({
+        ...stroke,
+        points: stroke.points.map((point) => ({ ...point })),
+        style: { ...stroke.style },
+        transform: { ...stroke.transform },
+      }));
+      items.current = document.items.map((item) => ({ ...item }));
+      selectedIds.current = new Set();
+      selectedItemId.current = null;
+      bump();
+    },
+    [bump],
+  );
+
   const undo = useCallback((): boolean => {
     const previous = history.current.pop();
     if (!previous) {
@@ -241,13 +402,19 @@ export function useBoardDoc() {
       return true;
     }
     strokes.current = previous.strokes;
+    items.current = previous.items;
     selectedIds.current = previous.selectedIds;
+    selectedItemId.current = previous.selectedItemId;
     bump();
     return true;
   }, [bump]);
 
   const clearAll = useCallback(() => {
-    if (strokes.current.length === 0 && selectedIds.current.size === 0) {
+    if (
+      strokes.current.length === 0 &&
+      items.current.length === 0 &&
+      selectedIds.current.size === 0
+    ) {
       return;
     }
     // Clearing the board is undoable too.
@@ -256,13 +423,17 @@ export function useBoardDoc() {
       history.current.shift();
     }
     strokes.current = [];
+    items.current = [];
     selectedIds.current = new Set();
+    selectedItemId.current = null;
     bump();
   }, [bump, capture]);
 
   return {
     strokes,
     selectedIds,
+    items,
+    selectedItemId,
     version,
     bump,
     beginEdit,
@@ -277,6 +448,14 @@ export function useBoardDoc() {
     rotateSelection,
     undo,
     clearAll,
+    addItem,
+    updateItem,
+    removeItem,
+    duplicateItem,
+    reorderItem,
+    selectItem,
+    exportDocument,
+    importDocument,
   };
 }
 

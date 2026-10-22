@@ -167,6 +167,11 @@ function UserRow({ participant }: { participant: Participant }) {
             {participant.nickname}
             {participant.self && " (You)"}
           </span>
+          {participant.role === "host" && (
+            <span className="roleBadge" data-testid="participant-role">
+              Host
+            </span>
+          )}
           <span className="userDeviceId" data-testid="participant-device-id">
             {participant.deviceId}
           </span>

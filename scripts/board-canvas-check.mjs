@@ -343,6 +343,36 @@ async function main() {
       return { minX: minX + ${x0}, minY: minY + ${y0}, maxX: maxX + ${x0}, maxY: maxY + ${y0}, hits };
     })()`);
 
+  /**
+   * The bounding box of the imported magenta picture, in canvas pixels.
+   *
+   * The import check drops a plain magenta square on the board. Nothing else on
+   * the board is magenta — the gradients that are already there run between
+   * red, blue and green — so a strict match isolates the imported item.
+   */
+  const blueBounds = (x0, y0, x1, y1) =>
+    evaluate(`(() => {
+      const c = document.querySelector('[data-testid="boardCanvas"]');
+      const ctx = c.getContext('2d');
+      const w = ${x1 - x0}, h = ${y1 - y0};
+      const d = ctx.getImageData(${x0}, ${y0}, w, h).data;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, hits = 0;
+      for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          const i = (y * w + x) * 4;
+          if (d[i + 3] > 0 && d[i] > 180 && d[i + 2] > 180 && d[i + 1] < 90) {
+            hits += 1;
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      if (!hits) return null;
+      return { minX: minX + ${x0}, minY: minY + ${y0}, maxX: maxX + ${x0}, maxY: maxY + ${y0}, hits };
+    })()`);
+
   const canvasX = (clientX) => clientX - geo.left;
   const canvasY = (clientY) => clientY - geo.top;
 
@@ -390,7 +420,12 @@ async function main() {
     const ctx = c.getContext('2d');
     const col = ctx.getImageData(${canvasX(m.x + 250)}, 0, 1, c.height).data;
     let maxRun = 0, run = 0;
-    for (let i = 3; i < col.length; i += 4) { if (col[i] > 0) { run++; maxRun = Math.max(maxRun, run); } else run = 0; }
+    // The marker's own colour, so the board's background and its grid do not
+    // count as part of the stroke.
+    for (let i = 0; i < col.length; i += 4) {
+      const red = col[i] > 180 && col[i + 1] < 90 && col[i + 2] < 90;
+      if (red) { run++; maxRun = Math.max(maxRun, run); } else run = 0;
+    }
     return maxRun;
   })()`);
   check(
@@ -722,9 +757,11 @@ async function main() {
   const oldSpot = await sampleAt(canvasX(450), canvasY(540));
   const newSpot = await sampleAt(canvasX(600), canvasY(540));
   console.log("move samples:", JSON.stringify({ oldSpot, newSpot }));
+  /** Whether a pixel is the green of the shape that was dragged. */
+  const isGreen = (pixel) => pixel.g > 150 && pixel.r < 100 && pixel.b < 100;
   check(
     "dragging a selected shape moves it",
-    oldSpot.g < 120 && newSpot.g > 150 && newSpot.r < 100 && newSpot.b < 100,
+    !isGreen(oldSpot) && isGreen(newSpot),
     JSON.stringify({ oldSpot, newSpot }),
   );
 
@@ -1064,6 +1101,404 @@ async function main() {
     badgeAfter === "",
     `badge=${badgeAfter}`,
   );
+
+  // =========================================================================
+  // TEST 11 — the host keeps the board's own tools
+  // =========================================================================
+  const hostState = await evaluate(`(() => {
+    const clear = document.querySelector('[data-testid="tool-clear"]');
+    const hosts = JSON.parse(localStorage.getItem('wf_board_hosts') || '{}');
+    return {
+      disabled: clear ? clear.disabled : null,
+      title: clear ? clear.title : '',
+      host: hosts[${JSON.stringify(boardId)}] ?? null,
+      device: localStorage.getItem('wf_device_id'),
+    };
+  })()`);
+  check(
+    "the device that opened the board is its host, and may clear it",
+    hostState.disabled === false && hostState.host === hostState.device,
+    JSON.stringify(hostState),
+  );
+
+  await evaluate(`document.querySelector('[data-testid="tool-options"]').click(); 'options'`);
+  await sleep(500);
+  await evaluate(`document.querySelector('[data-testid="options-tab-participants"]').click(); 'tab'`);
+  await sleep(500);
+  const roles = await evaluate(`(() => {
+    const rows = Array.from(document.querySelectorAll('[data-testid="participant-row"]'));
+    return rows.map((row) => ({
+      self: row.getAttribute('data-self'),
+      role: row.querySelector('[data-testid="participant-role"]')?.textContent ?? '',
+    }));
+  })()`);
+  check(
+    "the participants list says who the host is",
+    roles.some((row) => row.self === "true" && row.role === "Host"),
+    JSON.stringify(roles),
+  );
+  await evaluate(`document.querySelector('[data-testid="options-menu-close"]')?.click(); 'closed'`);
+  await sleep(300);
+
+  // Another device: a guest, with no rights over the board itself.
+  await evaluate(`localStorage.setItem('wf_device_id','WM-OTHER-7788'); 'ok'`);
+  await goto(BOARD);
+  const guestState = await evaluate(`(() => {
+    const clear = document.querySelector('[data-testid="tool-clear"]');
+    return { disabled: clear ? clear.disabled : null, title: clear ? clear.title : '' };
+  })()`);
+  check(
+    "a device that did not open the board cannot clear it",
+    guestState.disabled === true,
+    JSON.stringify(guestState),
+  );
+
+  await evaluate(`document.querySelector('[data-testid="tool-options"]').click(); 'options'`);
+  await sleep(500);
+  const guestColours = await evaluate(`(() => {
+    const panel = document.querySelector('[data-testid="options-panel"]');
+    const wheel = panel.querySelector('[data-testid="color-wheel"]');
+    const note = panel.querySelector('[data-testid="bg-color-host-only"]');
+    return {
+      wheel: wheel ? wheel.getAttribute('data-disabled') : 'missing',
+      note: note ? note.textContent.trim() : '',
+    };
+  })()`);
+  check(
+    "the background colour belongs to the host alone",
+    guestColours.wheel === "true" && guestColours.note.length > 0,
+    JSON.stringify(guestColours),
+  );
+
+  // A guest that types a colour anyway must not get its way.
+  const guestBgBefore = await sampleAt(37, 37);
+  await evaluate(`(() => {
+    const input = document.querySelector('[data-testid="options-panel"] [data-testid="color-wheel-hex"]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, '00FF00');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    return 'typed';
+  })()`);
+  await sleep(600);
+  const guestBgAfter = await sampleAt(37, 37);
+  check(
+    "a guest's attempt to repaint the board is ignored",
+    guestBgBefore.r === guestBgAfter.r &&
+      guestBgBefore.g === guestBgAfter.g &&
+      guestBgBefore.b === guestBgAfter.b,
+    JSON.stringify({ guestBgBefore, guestBgAfter }),
+  );
+
+  // Back to the host.
+  await evaluate(`localStorage.setItem('wf_device_id','WM-A3F9-2C71'); 'ok'`);
+  await goto(BOARD);
+
+  // =========================================================================
+  // TEST 12 — the host paints the board's own colour
+  // =========================================================================
+  await evaluate(`document.querySelector('[data-testid="tool-options"]').click(); 'options'`);
+  await sleep(500);
+  await evaluate(`(() => {
+    const input = document.querySelector('[data-testid="options-panel"] [data-testid="color-wheel-hex"]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(input, 'FFEEDD');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return 'typed';
+  })()`);
+  await sleep(350);
+  await evaluate(`(() => {
+    const input = document.querySelector('[data-testid="options-panel"] [data-testid="color-wheel-hex"]');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    return 'enter';
+  })()`);
+  await sleep(700);
+  const painted = await sampleAt(37, 37);
+  check(
+    "the host's colour reaches the board",
+    painted.r === 255 && painted.g === 238 && painted.b === 221,
+    JSON.stringify(painted),
+  );
+  const savedSettings = await evaluate(
+    `localStorage.getItem('wf_board_settings_' + ${JSON.stringify(boardId)})`,
+  );
+  check(
+    "the board's colour is kept with the board",
+    String(savedSettings).includes("ffeedd"),
+    String(savedSettings),
+  );
+
+  // =========================================================================
+  // TEST 13 — flip colours: a personal view of the board
+  // =========================================================================
+  await evaluate(`document.querySelector('[data-testid="options-tab-settings"]').click(); 'tab'`);
+  await sleep(500);
+  await evaluate(`document.querySelector('[data-testid="settings-flip-colors"]').click(); 'flip'`);
+  await sleep(800);
+  const flipped = await sampleAt(37, 37);
+  check(
+    "flip colours turns the board into its negative",
+    flipped.r === 0 && flipped.g === 17 && flipped.b === 34,
+    JSON.stringify(flipped),
+  );
+  await evaluate(`document.querySelector('[data-testid="settings-flip-colors"]').click(); 'unflip'`);
+  await sleep(800);
+  const unflipped = await sampleAt(37, 37);
+  check(
+    "turning the flip off puts the colours back",
+    unflipped.r === 255 && unflipped.g === 238 && unflipped.b === 221,
+    JSON.stringify(unflipped),
+  );
+
+  // =========================================================================
+  // TEST 14 — the grid, and snapping to it
+  // =========================================================================
+  const gridOn = await sampleAt(80, 37);
+  check(
+    "the grid is drawn",
+    gridOn.r === 232 && gridOn.g === 232 && gridOn.b === 232,
+    JSON.stringify(gridOn),
+  );
+  await evaluate(`document.querySelector('[data-testid="settings-show-grid"]').click(); 'grid'`);
+  await sleep(800);
+  const gridOff = await sampleAt(80, 37);
+  check(
+    "the grid can be turned off",
+    gridOff.r === 255 && gridOff.g === 238 && gridOff.b === 221,
+    JSON.stringify(gridOff),
+  );
+  await evaluate(`document.querySelector('[data-testid="settings-show-grid"]').click(); 'grid'`);
+  await sleep(800);
+
+  // Snapping: a fill drawn well off the grid lands on it.
+  await evaluate(`document.querySelector('[data-testid="settings-snap-to-grid"]').click(); 'snap'`);
+  await sleep(500);
+  await evaluate(`document.querySelector('[data-testid="tool-draw"]').click(); 'draw'`);
+  await sleep(300);
+  await openPanel();
+  await pickStyle("Rellenar");
+  await setHex(0, "00FF00");
+  await closePanel();
+
+  /** World coordinates of the rectangle the fill is dragged over. */
+  const SNAP = { x: 907, y: 641, w: 110, h: 100 };
+  await mouse("mousePressed", pageX(SNAP.x), pageY(SNAP.y), 1);
+  for (const [dx, dy] of [
+    [SNAP.w, 0],
+    [SNAP.w, SNAP.h],
+    [0, SNAP.h],
+  ]) {
+    await mouse("mouseMoved", pageX(SNAP.x + dx), pageY(SNAP.y + dy), 1);
+    await sleep(40);
+  }
+  await sleep(200);
+  await mouse("mouseReleased", pageX(SNAP.x), pageY(SNAP.y + SNAP.h), 0);
+  await sleep(600);
+
+  const snapped = await greenBounds(860, 580, 1120, 780);
+  check(
+    "a fill snaps to the grid",
+    snapped !== null &&
+      Math.abs(snapped.minX - 880) <= 6 &&
+      Math.abs(snapped.minY - 640) <= 6 &&
+      Math.abs(snapped.maxX - 1040) <= 6 &&
+      Math.abs(snapped.maxY - 720) <= 6,
+    JSON.stringify(snapped),
+  );
+  await evaluate(`document.querySelector('[data-testid="settings-snap-to-grid"]').click(); 'snap'`);
+  await sleep(400);
+
+  // =========================================================================
+  // TEST 15 — importing media, and editing it like here.fm does
+  // =========================================================================
+  const stripOrder = await evaluate(`(() => {
+    const strip = document.querySelector('#menuStrip');
+    const ids = Array.from(strip.querySelectorAll('[data-testid]')).map((el) =>
+      el.getAttribute('data-testid'),
+    );
+    const erase = document.querySelector('[data-testid="tool-erase"]').getBoundingClientRect();
+    const imp = document.querySelector('[data-testid="tool-import"]').getBoundingClientRect();
+    return { ids, eraseBottom: erase.bottom, importTop: imp.top };
+  })()`);
+  check(
+    "the Import button sits right under Erase",
+    stripOrder.ids.indexOf("tool-import") === stripOrder.ids.indexOf("tool-erase") + 1 &&
+      stripOrder.importTop >= stripOrder.eraseBottom - 1,
+    JSON.stringify(stripOrder),
+  );
+
+  await evaluate(`document.querySelector('[data-testid="tool-import"]').click(); 'clicked'`);
+  await sleep(500);
+  const importMenu = await evaluate(`(() => {
+    const menu = document.querySelector('[data-testid="import-menu"]');
+    if (!menu) return null;
+    return {
+      options: Array.from(menu.querySelectorAll('.importMenuOption')).map((o) =>
+        o.textContent.trim(),
+      ),
+      file: !!menu.querySelector('[data-testid="import-image-file"] input[type=file]'),
+      audio: !!menu.querySelector('[data-testid="import-audio"] input[type=file]'),
+      voice: !!menu.querySelector('[data-testid="import-voice"]'),
+    };
+  })()`);
+  check(
+    "the Import menu offers here.fm's three ways in",
+    importMenu !== null &&
+      importMenu.options.join("|") === "Image or file|Audio|Record voice note" &&
+      importMenu.file &&
+      importMenu.audio &&
+      importMenu.voice,
+    JSON.stringify(importMenu),
+  );
+
+  // A plain magenta square, 120 by 120.
+  await evaluate(`(async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 120;
+    canvas.height = 120;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ff00ff';
+    ctx.fillRect(0, 0, 120, 120);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    const file = new File([blob], 'magenta-square.png', { type: 'image/png' });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    const input = document.querySelector('[data-testid="import-image-file"] input');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'imported';
+  })()`);
+  await sleep(1500);
+
+  /** The middle of the board, where an import lands. */
+  const MID = { x: Math.round(geo.bufW / 2), y: Math.round(geo.bufH / 2) };
+  const landed = await blueBounds(MID.x - 200, MID.y - 200, MID.x + 200, MID.y + 200);
+  check(
+    "an imported picture lands in the middle of the board",
+    landed !== null &&
+      Math.abs(landed.minX - (MID.x - 60)) <= 4 &&
+      Math.abs(landed.minY - (MID.y - 60)) <= 4 &&
+      Math.abs(landed.maxX - (MID.x + 60)) <= 4 &&
+      Math.abs(landed.maxY - (MID.y + 60)) <= 4,
+    JSON.stringify(landed),
+  );
+
+  // The small options under the item are drawn on the canvas.
+  const chrome = await countSelection(MID.x - 80, MID.y + 78, MID.x + 80, MID.y + 96);
+  check(
+    "the item shows its small options underneath",
+    chrome > 0,
+    `coral=${chrome}`,
+  );
+
+  // The three-dot menu.
+  await evaluate(`document.querySelector('[data-testid="tool-select"]').click(); 'select'`);
+  await sleep(400);
+  await mouse("mousePressed", pageX(MID.x + 12), pageY(MID.y + 86), 1);
+  await mouse("mouseReleased", pageX(MID.x + 12), pageY(MID.y + 86), 0);
+  await sleep(600);
+  const itemMenu = await evaluate(`(() => {
+    const menu = document.querySelector('[data-testid="item-menu"]');
+    if (!menu) return null;
+    return {
+      entries: Array.from(menu.querySelectorAll('button')).map((b) => b.textContent.trim()),
+      left: menu.getBoundingClientRect().left,
+    };
+  })()`);
+  const wanted = [
+    "Move to front",
+    "Move to back",
+    "Pin",
+    "Lock",
+    "Mirror",
+    "Duplicate",
+    "Delete",
+  ];
+  check(
+    "the three-dot menu carries here.fm's options",
+    itemMenu !== null && wanted.every((label) => itemMenu.entries.includes(label)),
+    JSON.stringify(itemMenu),
+  );
+
+  await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'esc'`);
+  await sleep(400);
+  const menuGone = await evaluate(`!document.querySelector('[data-testid="item-menu"]')`);
+  check("Escape closes the item menu", menuGone, `closed=${menuGone}`);
+
+  // Growing the item: the resize handle is at the right of the options row.
+  await mouse("mousePressed", pageX(MID.x + 36), pageY(MID.y + 86), 1);
+  for (let step = 1; step <= 8; step += 1) {
+    await mouse(
+      "mouseMoved",
+      pageX(MID.x + 36 + step * 4.5),
+      pageY(MID.y + 86 + step * 10.75),
+      1,
+    );
+    await sleep(30);
+  }
+  await sleep(200);
+  await mouse("mouseReleased", pageX(MID.x + 72), pageY(MID.y + 172), 0);
+  await sleep(600);
+  const grown = await blueBounds(MID.x - 260, MID.y - 260, MID.x + 260, MID.y + 260);
+  check(
+    "the resize handle grows the item",
+    grown !== null &&
+      Math.abs(grown.maxX - grown.minX - 240) <= 10 &&
+      Math.abs(grown.maxY - grown.minY - 240) <= 10,
+    JSON.stringify(grown),
+  );
+
+  // Turning the item: the rotate handle is at the left of the options row.
+  const handle = { x: MID.x - 12, y: MID.y + 146 };
+  const angle = Math.atan2(handle.y - MID.y, handle.x - MID.x);
+  const turnTo = {
+    x: MID.x + Math.cos(angle - Math.PI / 4) * 146.5,
+    y: MID.y + Math.sin(angle - Math.PI / 4) * 146.5,
+  };
+  await mouse("mousePressed", pageX(handle.x), pageY(handle.y), 1);
+  for (let step = 1; step <= 8; step += 1) {
+    await mouse(
+      "mouseMoved",
+      pageX(handle.x + ((turnTo.x - handle.x) * step) / 8),
+      pageY(handle.y + ((turnTo.y - handle.y) * step) / 8),
+      1,
+    );
+    await sleep(30);
+  }
+  await sleep(200);
+  await mouse("mouseReleased", pageX(turnTo.x), pageY(turnTo.y), 0);
+  await sleep(600);
+  const turned = await blueBounds(MID.x - 260, MID.y - 260, MID.x + 260, MID.y + 260);
+  check(
+    "the rotate handle turns the item",
+    turned !== null &&
+      Math.abs(turned.maxX - turned.minX - 339) <= 14 &&
+      Math.abs(turned.maxY - turned.minY - 339) <= 14,
+    JSON.stringify(turned),
+  );
+
+  // Undo takes both transforms back, and the item is where it was.
+  await evaluate(`document.querySelector('[data-testid="tool-undo"]').click(); 'undo'`);
+  await sleep(500);
+  await evaluate(`document.querySelector('[data-testid="tool-undo"]').click(); 'undo'`);
+  await sleep(600);
+  const undone = await blueBounds(MID.x - 200, MID.y - 200, MID.x + 200, MID.y + 200);
+  check(
+    "undo takes the transforms back",
+    undone !== null &&
+      Math.abs(undone.maxX - undone.minX - 120) <= 8 &&
+      Math.abs(undone.maxY - undone.minY - 120) <= 8,
+    JSON.stringify(undone),
+  );
+
+  // And the three-dot menu can throw the item away.
+  await mouse("mousePressed", pageX(MID.x + 12), pageY(MID.y + 86), 1);
+  await mouse("mouseReleased", pageX(MID.x + 12), pageY(MID.y + 86), 0);
+  await sleep(600);
+  await evaluate(`document.querySelector('[data-testid="item-menu-delete"]').click(); 'deleted'`);
+  await sleep(700);
+  const removed = await blueBounds(MID.x - 200, MID.y - 200, MID.x + 200, MID.y + 200);
+  check("the three-dot menu deletes the item", removed === null, JSON.stringify(removed));
 
   // =========================================================================
   // summary

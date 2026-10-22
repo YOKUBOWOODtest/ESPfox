@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { displayName, readStoredNickname, type DeviceUser } from "./use-device-user";
+import type { BoardRole } from "./use-board-host";
 
 /**
  * Whiteboard presence.
@@ -37,6 +38,14 @@ export interface Participant {
   avatarHue: number;
   /** Whether this participant may be blocked (co-host only in the source). */
   canBlock: boolean;
+  /**
+   * The board's host, or a plain user.
+   *
+   * The host is the device that opened the board first; everybody else is a
+   * user. The host keeps the board's destructive tools — clearing it and
+   * changing its background colour.
+   */
+  role: BoardRole;
 }
 
 /** Boards this device has opened, so the Lobby can list recent whiteboards. */
@@ -79,9 +88,14 @@ export function avatarHue(deviceId: string): number {
 const snapshotCache = new Map<string, BoardState>();
 const cacheSignatures = new Map<string, string>();
 
-function boardSnapshot(boardId: string, user: DeviceUser, pro: boolean): BoardState {
+function boardSnapshot(
+  boardId: string,
+  user: DeviceUser,
+  pro: boolean,
+  hostId: string | null,
+): BoardState {
   const selfKey = user.id || "…";
-  const signature = `${boardId}|${selfKey}|${user.nickname ?? ""}|${pro}`;
+  const signature = `${boardId}|${selfKey}|${user.nickname ?? ""}|${pro}|${hostId ?? ""}`;
   const cached = snapshotCache.get(boardId);
   if (cached && cacheSignatures.get(boardId) === signature) {
     return cached;
@@ -96,6 +110,8 @@ function boardSnapshot(boardId: string, user: DeviceUser, pro: boolean): BoardSt
     // Hue follows the device id, so a visitor keeps the same avatar everywhere.
     avatarHue: avatarHue(selfKey),
     canBlock: false,
+    // The device that opened the board first is its host.
+    role: hostId !== null && hostId === selfKey ? "host" : "user",
   };
   const state: BoardState = {
     id: boardId,
@@ -167,9 +183,20 @@ export function useJoinedBoards(): JoinedBoard[] {
   return useSyncExternalStore(subscribe, getSnapshot, getServerJoined);
 }
 
-export function useBoard(boardId: string, user: DeviceUser, pro: boolean): BoardState {
-  const getSnapshot = () => boardSnapshot(boardId, user, pro);
+/**
+ * The board's presence.
+ *
+ * `hostId` is the device that owns the board; it decides whether the visitor
+ * is the host or a user.
+ */
+export function useBoard(
+  boardId: string,
+  user: DeviceUser,
+  pro: boolean,
+  hostId: string | null,
+): BoardState {
+  const getSnapshot = () => boardSnapshot(boardId, user, pro, hostId);
   const getServerSnapshot = () =>
-    boardSnapshot(boardId, { id: "", nickname: readStoredNickname() }, false);
+    boardSnapshot(boardId, { id: "", nickname: readStoredNickname() }, false, null);
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

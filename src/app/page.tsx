@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Contact } from "@/components/sites/whiteboardfox/contact";
 import { Features } from "@/components/sites/whiteboardfox/features";
-import { Gallery } from "@/components/sites/whiteboardfox/gallery";
 import { Hero } from "@/components/sites/whiteboardfox/hero";
 import { SiteShell } from "@/components/sites/whiteboardfox/site-shell";
 
@@ -15,7 +14,6 @@ export default function Home() {
   return (
     <SiteShell>
       <Hero />
-      <Gallery />
       <Features />
       <Contact />
     </SiteShell>

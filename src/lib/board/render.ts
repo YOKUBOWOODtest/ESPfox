@@ -13,7 +13,14 @@
  */
 
 import type { Camera } from "./camera";
+import { invertColor } from "./color";
 import { GRID_MAJOR_COLOR, GRID_MINOR_COLOR, gridLines, isMajor } from "./grid";
+import {
+  formatDuration,
+  itemCorners,
+  itemHalfSize,
+  type ImportedItem,
+} from "./imported";
 import {
   applyTransform,
   normalizeGradientStops,
@@ -78,6 +85,25 @@ export interface RenderInput {
   camera: Camera;
   viewport: Viewport;
   strokes: Stroke[];
+  /** The media the board carries, drawn on top of the ink. */
+  items?: ImportedItem[];
+  /** The board's background colour; white when not set. */
+  background?: string;
+  /**
+   * Whether the board is drawn with inverted colours.
+   *
+   * This is a personal setting: the board itself is untouched, only this
+   * browser's view of it is flipped.
+   */
+  flipColors?: boolean;
+  /** Whether the grid is drawn. */
+  showGrid?: boolean;
+  /** The board's grid size, in world units. */
+  gridSize?: number;
+  /** The imported item that is selected, if any. */
+  selectedItemId?: string | null;
+  /** The imported item that is playing, if any. */
+  playingItemId?: string | null;
   selection?: SelectionBox | null;
   lasso?: LassoPath | null;
   /** Draw the eraser brush ring under the cursor. */
@@ -106,12 +132,21 @@ export function render(input: RenderInput): void {
   }
   prepareContext(context, viewport);
 
+  const flip = input.flipColors === true;
+  /** Every colour the board paints goes through here, so "flip" is one rule. */
+  const tint = (hex: string) => (flip ? invertColor(hex) : hex);
+
   context.save();
   context.setTransform(viewport.dpr, 0, 0, viewport.dpr, 0, 0);
-  context.clearRect(0, 0, viewport.width, viewport.height);
+
+  // The board's own colour, not the page's: the host can change it.
+  context.fillStyle = tint(input.background ?? "#ffffff");
+  context.fillRect(0, 0, viewport.width, viewport.height);
 
   // Painter's algorithm: the grid sits underneath everything.
-  drawGrid(context, camera, viewport);
+  if (input.showGrid !== false) {
+    drawGrid(context, camera, viewport, input.gridSize, tint);
+  }
 
   // World space: translate then scale, so stroke coordinates are untouched by
   // the zoom and remain stable when the camera moves.
@@ -123,13 +158,22 @@ export function render(input: RenderInput): void {
   context.lineJoin = "round";
 
   for (const stroke of strokes) {
-    drawStroke(context, stroke, camera.scale);
+    drawStroke(context, stroke, camera.scale, tint);
+  }
+
+  // Imported media sits on top of the ink, the way a sticker does.
+  for (const item of input.items ?? []) {
+    drawItem(context, item, flip, item.id === input.playingItemId);
   }
 
   context.restore();
 
   // Overlays are drawn in screen space so their line widths and handle sizes do
   // not grow with the zoom.
+  const selected = (input.items ?? []).find((item) => item.id === input.selectedItemId);
+  if (selected) {
+    drawItemChrome(context, camera, selected, tint);
+  }
   if (input.lasso) {
     drawLasso(context, camera, input.lasso);
   }
@@ -147,14 +191,21 @@ function drawGrid(
   context: CanvasRenderingContext2D,
   camera: Camera,
   viewport: Viewport,
+  gridSize: number | undefined,
+  tint: (hex: string) => string,
 ): void {
-  const { vertical, horizontal } = gridLines(camera, viewport.width, viewport.height);
+  const { vertical, horizontal } = gridLines(
+    camera,
+    viewport.width,
+    viewport.height,
+    gridSize,
+  );
   context.lineWidth = 1;
 
   // Minor and major lines are drawn in two passes so each can use one path and
   // one colour, instead of switching strokeStyle per line.
   for (const major of [false, true]) {
-    context.strokeStyle = major ? GRID_MAJOR_COLOR : GRID_MINOR_COLOR;
+    context.strokeStyle = tint(major ? GRID_MAJOR_COLOR : GRID_MINOR_COLOR);
     context.beginPath();
     for (const line of vertical) {
       if (isMajor(line.index) !== major) {
@@ -181,6 +232,7 @@ function drawStroke(
   context: CanvasRenderingContext2D,
   stroke: Stroke,
   scale: number,
+  tint: (hex: string) => string,
 ): void {
   const { points, style, transform } = stroke;
   if (points.length === 0) {
@@ -243,11 +295,11 @@ function drawStroke(
       // The alpha lives in the stroke's opacity, so only the rgb prefix is
       // used here; the stops carry their own position along the ramp.
       for (const stop of stops) {
-        gradient.addColorStop(stop.position, stop.color.slice(0, 7));
+        gradient.addColorStop(stop.position, tint(stop.color.slice(0, 7)));
       }
       context.fillStyle = gradient;
     } else {
-      context.fillStyle = style.color;
+      context.fillStyle = tint(style.color);
     }
 
     context.fill();
@@ -258,7 +310,7 @@ function drawStroke(
   // Normal stroke drawing (marker, calligraphy, ink-pen)
   context.save();
   context.globalAlpha = style.opacity;
-  context.strokeStyle = style.color;
+  context.strokeStyle = tint(style.color);
   // Divide by the zoom so the stroke keeps its world width; the context is
   // already scaled by `scale`, so a raw width would multiply by it.
   context.lineWidth = style.width;
@@ -283,12 +335,399 @@ function drawStroke(
   void scale;
 }
 
+/* --- Imported items -------------------------------------------------------- */
+
+/**
+ * Decoded images, kept by source.
+ *
+ * An <img> element is decoded by the browser once and then drawn many times,
+ * so the board never pays for the decode on every frame.
+ */
+const imageCache = new Map<string, HTMLImageElement>();
+
+function cachedImage(src: string): HTMLImageElement | null {
+  if (typeof window === "undefined" || !src) {
+    return null;
+  }
+  const existing = imageCache.get(src);
+  if (existing) {
+    return existing;
+  }
+  const image = new Image();
+  image.decoding = "async";
+  image.src = src;
+  imageCache.set(src, image);
+  return image;
+}
+
+/** Rounds the corners of the current path. */
+function roundRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void {
+  const r = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + r);
+  context.lineTo(x + width, y + height - r);
+  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  context.lineTo(x + r, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - r);
+  context.lineTo(x, y + r);
+  context.quadraticCurveTo(x, y, x + r, y);
+  context.closePath();
+}
+
+/**
+ * A stable pseudo-waveform for an audio item.
+ *
+ * The bars are derived from the name, so the same file always looks the same
+ * and the card does not jump around between frames.
+ */
+function waveformBars(seed: string, count: number): number[] {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) % 100000;
+  }
+  const bars: number[] = [];
+  for (let index = 0; index < count; index += 1) {
+    hash = (hash * 1103515245 + 12345) % 2147483648;
+    bars.push(0.25 + (hash % 1000) / 1250);
+  }
+  return bars;
+}
+
+/** Draws one imported item, in world space. */
+function drawItem(
+  context: CanvasRenderingContext2D,
+  item: ImportedItem,
+  flip: boolean,
+  playing: boolean,
+): void {
+  const { halfWidth, halfHeight } = itemHalfSize(item);
+
+  context.save();
+  context.translate(item.x, item.y);
+  context.rotate(item.rotation);
+  if (item.mirrored) {
+    context.scale(-1, 1);
+  }
+
+  if (item.kind === "image") {
+    const image = cachedImage(item.src);
+    if (image && image.complete && image.naturalWidth > 0) {
+      if (flip) {
+        // A picture becomes its negative, like every other colour.
+        context.filter = "invert(1)";
+      }
+      context.drawImage(image, -halfWidth, -halfHeight, halfWidth * 2, halfHeight * 2);
+      context.filter = "none";
+    } else {
+      // Not decoded yet: a placeholder that keeps the item's footprint.
+      context.fillStyle = flip ? "#2f2f2f" : "#ececec";
+      context.fillRect(-halfWidth, -halfHeight, halfWidth * 2, halfHeight * 2);
+      context.strokeStyle = flip ? "#5c5c5c" : "#bdbdbd";
+      context.lineWidth = 1;
+      context.strokeRect(-halfWidth, -halfHeight, halfWidth * 2, halfHeight * 2);
+    }
+    context.restore();
+    return;
+  }
+
+  if (item.kind === "file") {
+    drawFileCard(context, item, halfWidth, halfHeight, flip);
+    context.restore();
+    return;
+  }
+
+  drawAudioCard(context, item, halfWidth, halfHeight, flip, playing);
+  context.restore();
+}
+
+/**
+ * The card a file that is not a picture is drawn on.
+ *
+ * here.fm shows a file that is not an image as a card with the file's name
+ * on it, the same way it shows an audio file as a card with a play button.
+ */
+function drawFileCard(
+  context: CanvasRenderingContext2D,
+  item: ImportedItem,
+  halfWidth: number,
+  halfHeight: number,
+  flip: boolean,
+): void {
+  const width = halfWidth * 2;
+  const height = halfHeight * 2;
+
+  context.fillStyle = flip ? "#1d1d1d" : "#ffffff";
+  roundRect(context, -halfWidth, -halfHeight, width, height, 14);
+  context.fill();
+  context.strokeStyle = flip ? "#3d3d3d" : "#d9d9d9";
+  context.lineWidth = 1;
+  context.stroke();
+
+  // A small sheet of paper, the way a file is shown on the web.
+  const paperX = -halfWidth + 24;
+  const paperWidth = 30;
+  const paperHeight = 38;
+  const paperY = -paperHeight / 2;
+  context.fillStyle = flip ? "#f4f4f4" : "#f6f6f6";
+  roundRect(context, paperX - paperWidth / 2, paperY, paperWidth, paperHeight, 4);
+  context.fill();
+  context.strokeStyle = flip ? "#5c5c5c" : "#c9c9c9";
+  context.stroke();
+
+  // The lines on the sheet.
+  context.strokeStyle = flip ? "#6f6f6f" : "#bdbdbd";
+  context.lineWidth = 2;
+  for (let line = 0; line < 3; line += 1) {
+    const lineY = paperY + 11 + line * 8;
+    context.beginPath();
+    context.moveTo(paperX - 9, lineY);
+    context.lineTo(paperX + 9, lineY);
+    context.stroke();
+  }
+
+  // The name of the file.
+  const textX = -halfWidth + 50;
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  context.fillStyle = flip ? "#f4f4f4" : "#222222";
+  context.font = "600 15px Roboto, sans-serif";
+  context.fillText(
+    trimToWidth(context, item.name, halfWidth * 2 - 68),
+    textX,
+    -8,
+  );
+
+  context.fillStyle = flip ? "#a8a8a8" : "#6b6b6b";
+  context.font = "12px Roboto, sans-serif";
+  context.fillText("File", textX, 12);
+}
+
+/** The card an audio file or a voice note is drawn on. */
+function drawAudioCard(
+  context: CanvasRenderingContext2D,
+  item: ImportedItem,
+  halfWidth: number,
+  halfHeight: number,
+  flip: boolean,
+  playing: boolean,
+): void {
+  const width = halfWidth * 2;
+  const height = halfHeight * 2;
+
+  context.fillStyle = flip ? "#1d1d1d" : "#ffffff";
+  roundRect(context, -halfWidth, -halfHeight, width, height, 14);
+  context.fill();
+  context.strokeStyle = flip ? "#3d3d3d" : "#d9d9d9";
+  context.lineWidth = 1;
+  context.stroke();
+
+  // The play button.
+  const buttonX = -halfWidth + 30;
+  context.fillStyle = flip ? invertColor("#e0533f") : "#e0533f";
+  context.beginPath();
+  context.arc(buttonX, 0, 15, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = "#ffffff";
+  if (playing) {
+    context.fillRect(buttonX - 5, -7, 4, 14);
+    context.fillRect(buttonX + 1, -7, 4, 14);
+  } else {
+    context.beginPath();
+    context.moveTo(buttonX - 4, -8);
+    context.lineTo(buttonX + 7, 0);
+    context.lineTo(buttonX - 4, 8);
+    context.closePath();
+    context.fill();
+  }
+
+  // The name and the length.
+  const textX = -halfWidth + 54;
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  context.fillStyle = flip ? "#f4f4f4" : "#222222";
+  context.font = "600 15px Roboto, sans-serif";
+  const label =
+    item.kind === "voice" ? `Voice note — ${item.name}` : item.name;
+  context.fillText(trimToWidth(context, label, halfWidth * 2 - 70), textX, -9);
+
+  context.fillStyle = flip ? "#a8a8a8" : "#6b6b6b";
+  context.font = "12px Roboto, sans-serif";
+  context.fillText(formatDuration(item.duration), textX, 11);
+
+  // The waveform, on the right of the card.
+  const bars = waveformBars(item.name, 16);
+  const barWidth = 3;
+  const barGap = 2;
+  const barsWidth = bars.length * (barWidth + barGap);
+  let barX = halfWidth - 14 - barsWidth;
+  const maxBar = halfHeight - 18;
+  for (const value of bars) {
+    const barHeight = Math.max(3, value * maxBar);
+    context.fillStyle = playing
+      ? flip
+        ? invertColor("#e0533f")
+        : "#e0533f"
+      : flip
+        ? "#6f6f6f"
+        : "#cfcfcf";
+    context.fillRect(barX, -barHeight / 2, barWidth, barHeight);
+    barX += barWidth + barGap;
+  }
+}
+
+/** Cuts a label with an ellipsis so it fits the space it has. */
+function trimToWidth(
+  context: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string {
+  if (context.measureText(text).width <= maxWidth) {
+    return text;
+  }
+  let cut = text;
+  while (cut.length > 1 && context.measureText(`${cut}…`).width > maxWidth) {
+    cut = cut.slice(0, -1);
+  }
+  return `${cut}…`;
+}
+
+/* --- The small options under an imported item -------------------------------- */
+
+/** The buttons that sit under a selected item, as here.fm shows them. */
+export type ItemHandle = "download" | "rotate" | "dots" | "resize";
+
+export interface ItemChrome {
+  /** The item's corners, in screen space. */
+  corners: { x: number; y: number }[];
+  download: { x: number; y: number };
+  rotate: { x: number; y: number };
+  dots: { x: number; y: number };
+  resize: { x: number; y: number };
+}
+
+/** Screen-space geometry of an item's frame and its small options. */
+export function itemChromePositions(camera: Camera, item: ImportedItem): ItemChrome {
+  const corners = itemCorners(item).map((point) => ({
+    x: (point.x - camera.x) * camera.scale,
+    y: (point.y - camera.y) * camera.scale,
+  }));
+  // The options sit under the item's bottom edge, in a row.
+  const bottom = {
+    x: (corners[2].x + corners[3].x) / 2,
+    y: (corners[2].y + corners[3].y) / 2,
+  };
+  const rowY = bottom.y + 26;
+  return {
+    corners,
+    download: { x: bottom.x - 36, y: rowY },
+    rotate: { x: bottom.x - 12, y: rowY },
+    dots: { x: bottom.x + 12, y: rowY },
+    resize: { x: bottom.x + 36, y: rowY },
+  };
+}
+
+/** Draws the frame and the small options of a selected item. */
+function drawItemChrome(
+  context: CanvasRenderingContext2D,
+  camera: Camera,
+  item: ImportedItem,
+  tint: (hex: string) => string,
+): void {
+  const chrome = itemChromePositions(camera, item);
+  const accent = tint("#e0533f");
+
+  context.save();
+  context.beginPath();
+  chrome.corners.forEach((point, index) => {
+    if (index === 0) {
+      context.moveTo(point.x, point.y);
+    } else {
+      context.lineTo(point.x, point.y);
+    }
+  });
+  context.closePath();
+  context.strokeStyle = accent;
+  context.lineWidth = 1;
+  context.setLineDash([4, 4]);
+  context.stroke();
+  context.setLineDash([]);
+
+  // The row of small options.
+  const button = (centre: { x: number; y: number }) => {
+    context.beginPath();
+    context.arc(centre.x, centre.y, 11, 0, Math.PI * 2);
+    context.fillStyle = tint("#ffffff");
+    context.fill();
+    context.strokeStyle = accent;
+    context.lineWidth = 1.2;
+    context.stroke();
+  };
+
+  button(chrome.download);
+  button(chrome.rotate);
+  button(chrome.dots);
+  button(chrome.resize);
+
+  context.strokeStyle = accent;
+  context.fillStyle = accent;
+  context.lineWidth = 1.4;
+
+  // Download: an arrow into a tray.
+  context.beginPath();
+  context.moveTo(chrome.download.x, chrome.download.y - 5);
+  context.lineTo(chrome.download.x, chrome.download.y + 2);
+  context.moveTo(chrome.download.x - 3, chrome.download.y - 1);
+  context.lineTo(chrome.download.x, chrome.download.y + 2);
+  context.lineTo(chrome.download.x + 3, chrome.download.y - 1);
+  context.stroke();
+
+  // Rotate: an open circle with an arrow head.
+  context.beginPath();
+  context.arc(chrome.rotate.x, chrome.rotate.y, 5, Math.PI * 0.4, Math.PI * 1.75);
+  context.stroke();
+  context.beginPath();
+  context.moveTo(chrome.rotate.x + 4, chrome.rotate.y - 5);
+  context.lineTo(chrome.rotate.x + 6, chrome.rotate.y - 1);
+  context.lineTo(chrome.rotate.x + 2, chrome.rotate.y - 2);
+  context.closePath();
+  context.fill();
+
+  // The three dots.
+  for (const offset of [-3.5, 0, 3.5]) {
+    context.beginPath();
+    context.arc(chrome.dots.x + offset, chrome.dots.y, 1.3, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  // Resize: a diagonal arrow.
+  context.beginPath();
+  context.moveTo(chrome.resize.x - 5, chrome.resize.y + 5);
+  context.lineTo(chrome.resize.x + 4, chrome.resize.y - 4);
+  context.stroke();
+  context.beginPath();
+  context.moveTo(chrome.resize.x + 5, chrome.resize.y - 5);
+  context.lineTo(chrome.resize.x + 5, chrome.resize.y + 0.5);
+  context.lineTo(chrome.resize.x + 0.5, chrome.resize.y - 5);
+  context.closePath();
+  context.fill();
+
+  context.restore();
+}
+
 function drawLasso(
   context: CanvasRenderingContext2D,
   camera: Camera,
   lasso: LassoPath,
-): void {
-  if (lasso.points.length < 2) {
+): void {  if (lasso.points.length < 2) {
     return;
   }
   context.save();

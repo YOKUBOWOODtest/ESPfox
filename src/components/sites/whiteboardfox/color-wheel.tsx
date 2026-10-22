@@ -24,6 +24,13 @@ import { hexToHsv, hsvToHex, type Hsv } from "@/lib/board/color";
 export interface ColorPickerProps {
   value: string;
   onChange: (hex: string) => void;
+  /**
+   * When true the wheel is shown but cannot be used.
+   *
+   * The board's background colour belongs to the host, so everybody else sees
+   * the wheel greyed out rather than missing.
+   */
+  disabled?: boolean;
 }
 
 const WHEEL_SIZE = 200;
@@ -102,7 +109,7 @@ function paintSquare(canvas: HTMLCanvasElement, dpr: number, hue: number): void 
   context.fillRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
 }
 
-export function ColorPicker({ value, onChange }: ColorPickerProps) {
+export function ColorPicker({ value, onChange, disabled = false }: ColorPickerProps) {
   /**
    * The working HSV, tagged with the `value` it was derived from.
    *
@@ -157,6 +164,10 @@ export function ColorPicker({ value, onChange }: ColorPickerProps) {
   /** Applies an HSV change and pushes the resulting hex up. */
   const apply = useCallback(
     (next: Hsv, commit: boolean) => {
+      // A disabled wheel still shows its colour, but it never speaks back.
+      if (disabled) {
+        return;
+      }
       const clamped: Hsv = {
         h: ((next.h % 360) + 360) % 360,
         s: Math.min(1, Math.max(0, next.s)),
@@ -174,7 +185,7 @@ export function ColorPicker({ value, onChange }: ColorPickerProps) {
         setRecent((list) => [hex, ...list.filter((c) => c.toLowerCase() !== hex.toLowerCase())].slice(0, MAX_RECENT));
       }
     },
-    [onChange],
+    [disabled, onChange],
   );
 
   /** Angle of a wheel point, and its distance from the centre. */
@@ -290,6 +301,10 @@ export function ColorPicker({ value, onChange }: ColorPickerProps) {
   const hex = hsvToHex(hsv);
 
   const commitDraft = () => {
+    // A disabled wheel never speaks back, not even through its hex field.
+    if (disabled) {
+      return;
+    }
     const cleaned = draft.replace(/[^0-9a-fA-F]/g, "").slice(0, 6);
     // Accept 3-digit shorthand too, which artists type out of habit (#f80).
     const expanded =
@@ -312,12 +327,20 @@ export function ColorPicker({ value, onChange }: ColorPickerProps) {
   };
 
   return (
-    <div className="colorWheel" data-testid="color-wheel">
+    <div
+      className={`colorWheel ${disabled ? "colorWheelDisabled" : ""}`}
+      data-testid="color-wheel"
+      data-disabled={disabled ? "true" : "false"}
+    >
       <div className="colorWheelWheel">
         <canvas
           ref={ringRef}
           className="colorWheelRing"
-          style={{ width: WHEEL_SIZE, height: WHEEL_SIZE }}
+          style={{
+            width: WHEEL_SIZE,
+            height: WHEEL_SIZE,
+            pointerEvents: disabled ? "none" : "auto",
+          }}
           data-testid="color-wheel-ring"
           {...ringHandlers}
         />
@@ -340,7 +363,11 @@ export function ColorPicker({ value, onChange }: ColorPickerProps) {
           <canvas
             ref={squareRef}
             className="colorWheelSquare"
-            style={{ width: SQUARE_SIZE, height: SQUARE_SIZE }}
+            style={{
+              width: SQUARE_SIZE,
+              height: SQUARE_SIZE,
+              pointerEvents: disabled ? "none" : "auto",
+            }}
             data-testid="color-wheel-square"
             {...squareHandlers}
           />
@@ -362,6 +389,7 @@ export function ColorPicker({ value, onChange }: ColorPickerProps) {
               value={draft}
               spellCheck={false}
               maxLength={7}
+              readOnly={disabled}
               onChange={(event) => setDraft(event.target.value.toUpperCase())}
               onBlur={commitDraft}
               onKeyDown={(event) => {
@@ -383,6 +411,7 @@ export function ColorPicker({ value, onChange }: ColorPickerProps) {
             min={0}
             max={100}
             step={1}
+            disabled={disabled}
             value={Math.round(hsv.v * 100)}
             onChange={(event) => apply({ ...hsv, v: Number(event.target.value) / 100 }, false)}
             onPointerUp={() => apply(hsv, true)}
@@ -399,6 +428,7 @@ export function ColorPicker({ value, onChange }: ColorPickerProps) {
             min={0}
             max={100}
             step={1}
+            disabled={disabled}
             value={Math.round(hsv.s * 100)}
             onChange={(event) => apply({ ...hsv, s: Number(event.target.value) / 100 }, false)}
             onPointerUp={() => apply(hsv, true)}
@@ -418,6 +448,7 @@ export function ColorPicker({ value, onChange }: ColorPickerProps) {
                   style={{ background: entry }}
                   title={entry}
                   aria-label={`Use ${entry}`}
+                  disabled={disabled}
                   onClick={() => {
                     setPicked({ source: entry, hsv: hexToHsv(entry) });
                     setDraft(entry.replace("#", "").toUpperCase());

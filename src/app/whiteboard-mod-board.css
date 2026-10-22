@@ -71,6 +71,183 @@
   background-color: #e3e3e3;
 }
 
+/*
+ * A tool that this visitor may not use — Clear belongs to the board's host —
+ * is dimmed instead of hidden, so the strip still shows what the board can do.
+ */
+.menu-button:disabled {
+  color: #9a9a9a;
+  cursor: not-allowed;
+  background-color: transparent;
+}
+
+.menu-button:disabled:hover {
+  background-color: transparent;
+}
+
+.menu-button:disabled .html-face {
+  opacity: 0.45;
+}
+
+/* --- Import menu ----------------------------------------------------------- */
+
+.importWrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+/*
+ * The import menu hangs off the tool strip, to the right of it, so the 140px
+ * strip is never covered by the menu it opened.
+ */
+.importMenu {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  z-index: 12;
+  min-width: 224px;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid #dcdcdc;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+  color: #222222;
+}
+
+.importMenuTitle {
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #8a8a8a;
+}
+
+.importMenuOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  color: #222222;
+  text-align: left;
+  cursor: pointer;
+}
+
+.importMenuOption:hover {
+  background: var(--color-brand-tint);
+}
+
+.importMenuOption:disabled {
+  color: #9a9a9a;
+  cursor: progress;
+}
+
+.importMenuMessage {
+  margin: 4px 10px 2px;
+  font-size: 12px;
+  color: #a4402f;
+}
+
+/* The recording panel, shown while a voice note is being taken. */
+.importRecording {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid #ececec;
+  font-size: 13px;
+  color: #333333;
+}
+
+.importRecordingDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #d33c2e;
+  animation: importRecordingPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes importRecordingPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .importRecordingDot {
+    animation-duration: 1ms;
+  }
+}
+
+.importRecordingCancel {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #777777;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* --- The three-dot menu of an imported item --------------------------------- */
+
+.itemMenu {
+  position: absolute;
+  z-index: 20;
+  min-width: 180px;
+  padding: 4px;
+  background: #ffffff;
+  border: 1px solid #dcdcdc;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+
+.itemMenuOption {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #222222;
+  text-align: left;
+  cursor: pointer;
+}
+
+.itemMenuOption:hover {
+  background: var(--color-brand-tint);
+}
+
+/* The delete entry is red, the way here.fm marks it. */
+.itemMenuDelete {
+  color: #d33c2e;
+}
+
+.itemMenuDelete:hover {
+  background: #fdecea;
+}
+
 /* --- Panels shared chrome ------------------------------------------------ */
 
 /*
@@ -185,6 +362,26 @@
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   letter-spacing: 0.02em;
   user-select: text;
+}
+
+/*
+ * The host's badge.
+ *
+ * The board's host keeps the destructive tools, so it has to be obvious who
+ * that is. The badge sits next to the nickname in the brand colour.
+ */
+.roleBadge {
+  align-self: flex-start;
+  margin-left: 12px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--color-brand);
+  color: #ffffff;
+  font-size: 0.62em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.5;
 }
 
 .usersPanelHeader {
@@ -382,6 +579,23 @@
 .colorWheelRecentChip:hover {
   outline: 2px solid #e0533f;
   outline-offset: 1px;
+}
+
+/*
+ * The wheel of somebody who may not change the background colour.
+ *
+ * The wheel stays visible — it shows the board's colour — but it is dimmed
+ * and it does not take the pointer.
+ */
+.colorWheelDisabled {
+  opacity: 0.55;
+  filter: grayscale(0.7);
+  cursor: not-allowed;
+}
+
+.colorWheelDisabled .colorWheelRing,
+.colorWheelDisabled .colorWheelSquare {
+  cursor: not-allowed;
 }
 
 /* --- Gradient settings ---------------------------------------------------- */
