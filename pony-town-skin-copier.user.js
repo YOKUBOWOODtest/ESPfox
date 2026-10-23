@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Pony Town Skin Copier
-// @version      1.3.0
+// @version      1.7.0
 // @description  Click on any pony to copy their skin. Hold Shift + Click to copy.
 // @author       Assistant
 // @match        https://pony.town/*
@@ -18,7 +18,7 @@
     // ============================================
     const CONFIG = {
         modifierKey: 'Shift',
-        showInGameWhisper: true,  // Show whisper in chat instead of DOM notification
+        showInGameWhisper: true,
         debug: true,
     };
 
@@ -31,17 +31,12 @@
 
     function sendInGameWhisper(message) {
         if (!CONFIG.showInGameWhisper || !gameInstance) return;
-        
         try {
-            // Use the game's say/action system to send a whisper to self
-            // MessageType.WhisperTo = 14 (from source code)
             if (gameInstance.player && gameInstance.send) {
-                // Try to use the game's internal say function
                 gameInstance.send(server => server.say(gameInstance.playerId, message, 14));
             }
         } catch (e) {
             log('Could not send in-game whisper:', e);
-            // Fallback to DOM notification
             showDomNotification(message);
         }
     }
@@ -100,133 +95,196 @@
     }
 
     // ============================================
-    // GAME ACCESS - Deep Shadow DOM search
+    // STATE DETECTION - Lobby vs In-Game
+    // ============================================
+    function isInLobby() {
+        // On lobby/server selection screen, there's no game canvas with __game
+        // The main canvas might exist but won't have game data
+        // Check for lobby-specific elements
+        const hasServerList = document.querySelector('.server-list, [class*="server"], [class*="play-button"]');
+        const hasNoGameCanvas = !document.querySelector('canvas[__game]');
+        return hasServerList || hasNoGameCanvas;
+    }
+
+    function isInGame() {
+        // In-game: canvas with __game exists and has player+map+entities
+        const canvases = document.querySelectorAll('canvas');
+        for (const c of canvases) {
+            if (c.__game && c.__game.player && c.__game.map && c.__game.map.entities) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // ============================================
+    // GAME ACCESS - Aggressive canvas search + React fiber
     // ============================================
     let gameInstance = null;
     let canvas = null;
     let searchAttempts = 0;
+    let detectorInterval = null;
+    let isInitialized = false;
+
+    function stopDetector() {
+        if (detectorInterval) {
+            clearInterval(detectorInterval);
+            detectorInterval = null;
+            log('Detector stopped');
+        }
+    }
 
     function startGameDetector() {
-        log('Starting periodic game detector...');
+        if (detectorInterval) return; // Already running
         
-        const checkInterval = setInterval(() => {
+        log('Starting game detector (waiting for in-game)...');
+        
+        detectorInterval = setInterval(() => {
             if (gameInstance) {
-                clearInterval(checkInterval);
+                stopDetector();
                 log('Game already found, stopping detector');
+                return;
+            }
+
+            // Only search if we're actually in-game
+            if (!isInGame()) {
+                log('Not in game yet (lobby/server select), waiting...');
                 return;
             }
 
             searchAttempts++;
             const found = tryFindGame();
             if (found) {
-                clearInterval(checkInterval);
+                stopDetector();
                 gameInstance = found;
                 log('✅ Game instance found by detector after', searchAttempts, 'attempts!');
                 onGameFound();
-            } else if (searchAttempts % 5 === 0) {
-                // Log detailed info every 5 attempts
+            } else if (searchAttempts % 3 === 0) {
                 logDetailedSearchInfo();
             }
         }, 1000);
 
-        // Also try immediately
-        const immediate = tryFindGame();
-        if (immediate) {
-            clearInterval(checkInterval);
-            gameInstance = immediate;
-            log('✅ Game instance found immediately!');
-            onGameFound();
+        // Also try immediately if in-game
+        if (isInGame()) {
+            const immediate = tryFindGame();
+            if (immediate) {
+                stopDetector();
+                gameInstance = immediate;
+                log('✅ Game instance found immediately!');
+                onGameFound();
+            }
         }
     }
 
     function logDetailedSearchInfo() {
-        const app = document.querySelector('pony-town-app');
-        log('🔍 Search attempt', searchAttempts, '- window.game:', !!window.game, 'app:', !!app);
+        log('🔍 Search attempt', searchAttempts, '- window.game:', !!window.game, 'inGame:', isInGame());
         
+        const app = document.querySelector('pony-town-app');
+        log('  app:', !!app);
         if (app) {
             log('  app.game:', !!app.game);
             log('  app.shadowRoot:', !!app.shadowRoot);
-            
-            if (app.shadowRoot) {
-                const shadowCanvas = app.shadowRoot.querySelector('canvas');
-                log('  shadowRoot canvas:', !!shadowCanvas);
-                if (shadowCanvas) {
-                    log('  shadowCanvas.__game:', !!shadowCanvas.__game);
-                    log('  shadowCanvas.__game?.player:', !!shadowCanvas.__game?.player);
-                    log('  shadowCanvas.__game?.map:', !!shadowCanvas.__game?.map);
-                    log('  shadowCanvas.__game?.map?.entities:', !!shadowCanvas.__game?.map?.entities);
-                }
-                
-                // List all keys in shadowRoot that might contain game
-                const keys = Object.keys(app.shadowRoot).filter(k => !k.startsWith('_'));
-                log('  shadowRoot keys:', keys.slice(0, 20));
-                
-                // Check for any object with player+map
-                for (const key of keys) {
-                    try {
-                        const obj = app.shadowRoot[key];
-                        if (obj && typeof obj === 'object' && obj.player && obj.map) {
-                            log('  🎯 FOUND in shadowRoot.' + key + '!');
-                        }
-                    } catch (e) { }
-                }
-            }
         }
-        
-        // Check all canvases
+
+        // Check ALL canvases aggressively
         const canvases = document.querySelectorAll('canvas');
         log('  Total canvases:', canvases.length);
+        let foundOnCanvas = false;
         canvases.forEach((c, i) => {
-            log(`  canvas[${i}]: __game=`, !!c.__game, 'player=', !!c.__game?.player, 'map=', !!c.__game?.map);
+            if (c.__game) {
+                foundOnCanvas = true;
+                const g = c.__game;
+                log(`  🎯 canvas[${i}]: __game FOUND! player=${!!g.player} map=${!!g.map} entities=${!!g.map?.entities} keys=[${Object.keys(g).slice(0,12).join(',')}]`);
+                if (g.player && g.map) {
+                    log(`    player.id=${g.player.id} name="${g.player.name}"`);
+                    log(`    map.entities.length=${g.map.entities?.length}`);
+                }
+            } else if (c._reactRootContainer || c._reactInternals || c.__reactFiber) {
+                log(`  ⚛️ canvas[${i}] has React internals`);
+            }
         });
+        if (!foundOnCanvas) {
+            log('  ❌ No canvas has __game property');
+        }
+
+        // Check window for game-like objects
+        for (const key of Object.keys(window)) {
+            try {
+                const obj = window[key];
+                if (obj && typeof obj === 'object' && (obj.player || obj.map || obj.entities || obj.send)) {
+                    log(`  🌐 window.${key}: player=${!!obj.player} map=${!!obj.map} entities=${!!obj.entities} send=${typeof obj.send}`);
+                }
+            } catch (e) { }
+        }
     }
 
     function tryFindGame() {
-        // Method 1: window.game (set by bootstrap script)
+        // Method 1: window.game (set by bootstrap)
         if (window.game && window.game.player && window.game.map) {
             log('Found via window.game');
             canvas = document.querySelector('canvas');
             return window.game;
         }
 
-        // Method 2: pony-town-app web component
+        // Method 2: pony-town-app (light DOM)
         const app = document.querySelector('pony-town-app');
         if (app) {
-            // Check direct property
             if (app.game && app.game.player && app.game.map) {
                 log('Found via app.game');
-                canvas = app.shadowRoot?.querySelector('canvas') || document.querySelector('canvas');
+                canvas = document.querySelector('canvas');
                 return app.game;
-            }
-
-            // Check shadowRoot DEEPLY
-            if (app.shadowRoot) {
-                const shadowCanvas = app.shadowRoot.querySelector('canvas');
-                if (shadowCanvas) {
-                    if (shadowCanvas.__game && shadowCanvas.__game.player && shadowCanvas.__game.map) {
-                        log('Found via shadowCanvas.__game');
-                        canvas = shadowCanvas;
-                        return shadowCanvas.__game;
-                    }
-                    
-                    // Search ALL properties in shadowRoot recursively
-                    const foundInShadow = searchInObject(app.shadowRoot, 'shadowRoot');
-                    if (foundInShadow) return foundInShadow;
-                }
             }
         }
 
-        // Method 3: Any canvas with __game
+        // Method 3: SEARCH ALL CANVASES for __game (most reliable)
         const canvases = document.querySelectorAll('canvas');
         for (const c of canvases) {
-            if (c.__game && c.__game.player && c.__game.map) {
+            if (c.__game && c.__game.player && c.__game.map && c.__game.map.entities) {
                 log('Found via canvas.__game');
                 canvas = c;
                 return c.__game;
             }
         }
 
-        // Method 4: Search window for any game-like object
+        // Method 4: shadowRoot (if open)
+        if (app?.shadowRoot) {
+            const shadowCanvas = app.shadowRoot.querySelector('canvas');
+            if (shadowCanvas?.__game && shadowCanvas.__game.player && shadowCanvas.__game.map) {
+                log('Found via shadowCanvas.__game');
+                canvas = shadowCanvas;
+                return shadowCanvas.__game;
+            }
+
+            // Check all shadowRoot properties
+            const allKeys = Object.getOwnPropertyNames(app.shadowRoot);
+            for (const key of allKeys) {
+                try {
+                    const obj = app.shadowRoot[key];
+                    if (obj && obj.player && obj.map && obj.map.entities) {
+                        log('Found via shadowRoot.' + key);
+                        canvas = shadowCanvas || document.querySelector('canvas');
+                        return obj;
+                    }
+                } catch (e) { }
+            }
+
+            // Check getters
+            const descriptors = Object.getOwnPropertyDescriptors(app.shadowRoot);
+            for (const [key, desc] of Object.entries(descriptors)) {
+                if (desc.get) {
+                    try {
+                        const val = app.shadowRoot[key];
+                        if (val && val.player && val.map && val.map.entities) {
+                            log('Found via shadowRoot.' + key + ' (getter)');
+                            canvas = shadowCanvas || document.querySelector('canvas');
+                            return val;
+                        }
+                    } catch (e) { }
+                }
+            }
+        }
+
+        // Method 5: Search window for any game-like object
         for (const key of Object.keys(window)) {
             try {
                 const obj = window[key];
@@ -238,30 +296,48 @@
             } catch (e) { }
         }
 
+        // Method 6: React fiber traversal (last resort)
+        try {
+            for (const c of canvases) {
+                const fiber = c._reactRootContainer || c._reactInternals || c.__reactFiber;
+                if (fiber) {
+                    const found = searchReactFiber(fiber);
+                    if (found) {
+                        log('Found via React fiber traversal');
+                        canvas = c;
+                        return found;
+                    }
+                }
+            }
+        } catch (e) { }
+
         return null;
     }
 
-    function searchInObject(obj, path, depth = 0) {
-        if (depth > 3) return null; // Prevent infinite recursion
-        if (!obj || typeof obj !== 'object') return null;
+    function searchReactFiber(fiber, depth = 0) {
+        if (depth > 10) return null;
+        if (!fiber) return null;
         
         try {
-            // Check if this object IS the game
-            if (obj.player && obj.map && obj.map.entities) {
-                log('Found via ' + path);
-                return obj;
+            // Check fiber.stateNode
+            if (fiber.stateNode && fiber.stateNode.player && fiber.stateNode.map) {
+                return fiber.stateNode;
             }
-            
-            // Recurse into properties
-            for (const key of Object.keys(obj)) {
-                if (key.startsWith('_') || key === 'constructor') continue;
-                try {
-                    const val = obj[key];
-                    if (val && typeof val === 'object') {
-                        const found = searchInObject(val, path + '.' + key, depth + 1);
-                        if (found) return found;
-                    }
-                } catch (e) { }
+            // Check fiber.memoizedState
+            if (fiber.memoizedState && fiber.memoizedState.player && fiber.memoizedState.map) {
+                return fiber.memoizedState;
+            }
+            // Traverse children
+            let child = fiber.child;
+            while (child) {
+                const found = searchReactFiber(child, depth + 1);
+                if (found) return found;
+                child = child.sibling;
+            }
+            // Check return fiber
+            if (fiber.return) {
+                const found = searchReactFiber(fiber.return, depth + 1);
+                if (found) return found;
             }
         } catch (e) { }
         return null;
@@ -269,7 +345,7 @@
 
     function onGameFound() {
         if (!canvas) {
-            canvas = document.querySelector('canvas') || document.querySelector('pony-town-app')?.shadowRoot?.querySelector('canvas');
+            canvas = document.querySelector('canvas');
         }
         
         if (canvas) {
@@ -289,10 +365,6 @@
     function getCanvas() {
         if (canvas) return canvas;
         canvas = document.querySelector('canvas');
-        if (!canvas) {
-            const app = document.querySelector('pony-town-app');
-            canvas = app?.shadowRoot?.querySelector('canvas');
-        }
         return canvas;
     }
 
@@ -458,41 +530,89 @@
     }
 
     // ============================================
-    // INITIALIZATION
+    // INITIALIZATION - Smart lobby/game detection
     // ============================================
-    function init() {
-        log('Initializing Pony Town Skin Copier v1.3...');
+    function initializeForCurrentPage() {
+        log('Initializing for current page...', { 
+            url: location.href, 
+            inLobby: isInLobby(), 
+            inGame: isInGame() 
+        });
+
+        // Reset state
+        gameInstance = null;
+        canvas = null;
         searchAttempts = 0;
-        startGameDetector();
+        stopDetector();
+
+        if (isInGame()) {
+            log('Already in-game, starting detector immediately');
+            startGameDetector();
+        } else if (isInLobby()) {
+            log('In lobby/server select - waiting for game to load...');
+            showDomNotification('En lobby - Skin Copier esperará a que entres al juego');
+            // Detector will start when game loads (via SPA navigation handler)
+        } else {
+            log('Unknown page state, starting detector anyway');
+            startGameDetector();
+        }
+    }
+
+    function init() {
+        if (isInitialized) return;
+        isInitialized = true;
+        
+        log('Initializing Pony Town Skin Copier v1.7...');
+        initializeForCurrentPage();
         
         if (typeof customElements !== 'undefined') {
             customElements.whenDefined('pony-town-app').then(() => {
                 log('pony-town-app custom element defined');
                 setTimeout(() => {
-                    if (!gameInstance) startGameDetector();
+                    if (!gameInstance && isInGame()) startGameDetector();
                 }, 500);
             });
         }
     }
 
+    // Handle SPA navigation (lobby -> game, game -> lobby, etc.)
+    let lastUrl = location.href;
+    let lastInGameState = isInGame();
+    
+    new MutationObserver(() => {
+        const url = location.href;
+        const currentInGame = isInGame();
+        
+        if (url !== lastUrl || currentInGame !== lastInGameState) {
+            const urlChanged = url !== lastUrl;
+            const stateChanged = currentInGame !== lastInGameState;
+            
+            lastUrl = url;
+            lastInGameState = currentInGame;
+            
+            log('Page state changed:', { 
+                urlChanged, 
+                stateChanged, 
+                inLobby: isInLobby(), 
+                inGame: currentInGame,
+                url: location.href 
+            });
+            
+            // Reset and re-initialize for new state
+            gameInstance = null;
+            canvas = null;
+            searchAttempts = 0;
+            stopDetector();
+            
+            setTimeout(initializeForCurrentPage, 1000);
+        }
+    }).observe(document, { subtree: true, childList: true });
+
+    // Start immediately
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
     }
-
-    // Handle SPA navigation
-    let lastUrl = location.href;
-    new MutationObserver(() => {
-        const url = location.href;
-        if (url !== lastUrl) {
-            lastUrl = url;
-            log('SPA navigation detected, reinitializing...');
-            gameInstance = null;
-            canvas = null;
-            searchAttempts = 0;
-            setTimeout(init, 1500);
-        }
-    }).observe(document, { subtree: true, childList: true });
 
 })();

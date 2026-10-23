@@ -32,6 +32,7 @@ import { usePro } from "./use-pro";
 import { useRoom } from "./use-room";
 import { useRoomMic } from "./use-room-mic";
 import { useIsMobile, useTouchGestures, multiTouchActiveRef } from "./use-mobile";
+import { useBoardSync } from "./use-board-sync";
 import { WHITEBOARDMOD_ORIGIN } from "./site-header";
 import {
   clampScale,
@@ -163,7 +164,14 @@ export function BoardSection({ boardId }: { boardId: string }) {
    */
   const { hostId, isHost } = useBoardHost(effectiveId, user.id);
   const board = useBoard(effectiveId, user, pro, hostId);
-  const doc = useBoardDoc(effectiveId);
+  const doc = useBoardDoc({
+    onStrokeCommit: (stroke) => sync.sendStroke(stroke),
+    onStrokesRemove: (strokeIds) => sync.sendStrokeRemove(strokeIds),
+    onStrokeTransform: (strokeId, transform) => sync.sendStrokeTransform(strokeId, transform),
+    onItemsChange: (items) => {
+      // Items are synced via individual operations, but we could do a full sync here if needed
+    },
+  });
   /** The board's own settings: background, grid, snapping and auto-save. */
   const settings = useBoardSettings(effectiveId);
   /** Whether this browser sees the board with inverted colours. */
@@ -183,6 +191,56 @@ export function BoardSection({ boardId }: { boardId: string }) {
    */
   const room = useRoom(effectiveId, displayName(user), user.id, chatOpen);
   const mic = useRoomMic();
+
+  /** Real-time collaboration sync with other users. */
+  const sync = useBoardSync({
+    boardId: effectiveId,
+    userId: user.id,
+    userName: displayName(user),
+    userHue: board.participants[0]?.avatarHue ?? 0,
+    onStrokesChange: (strokes) => {
+      doc.strokes.current = strokes;
+      doc.bump();
+    },
+    onItemsChange: (items) => {
+      doc.items.current = items;
+      doc.bump();
+    },
+    onUsersChange: (users) => {
+      // The board's participant list is separate, but we could merge if needed
+      // For now, the board uses its own participant system
+    },
+    onHostChange: (isHost, hostId) => {
+      // Host status is managed by useBoardHost
+    },
+    onSettingsChange: (settings) => {
+      writeSettings(effectiveId, settings);
+    },
+    onCursorUpdate: (userId, x, y, color, name) => {
+      // Store remote cursor for rendering
+      remoteCursors.current.set(userId, { x, y, color, name, lastUpdate: Date.now() });
+      schedulePaint();
+    },
+    onCursorRemove: (userId) => {
+      remoteCursors.current.delete(userId);
+      schedulePaint();
+    },
+    onMessage: (message) => {
+      // Handled by useRoom
+    },
+    onReaction: (reaction) => {
+      // Handled by useRoom
+    },
+    onKicked: () => {
+      window.location.href = `/lobby?from=board&kicked=1`;
+    },
+    onBanned: () => {
+      window.location.href = `/lobby?from=board&banned=1`;
+    },
+    onError: (message) => {
+      console.error("[Sync] Error:", message);
+    },
+  });
 
   /** Detecta si estamos en móvil para cambiar la UI. */
   const isMobile = useIsMobile();
@@ -229,6 +287,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const cursor = useRef<{ x: number; y: number; radius: number } | null>(null);
   /** Lasso path while selecting, in world space. */
   const lasso = useRef<LassoPath | null>(null);
+  /** Remote user cursors for real-time collaboration. */
+  const remoteCursors = useRef<Map<string, { x: number; y: number; color: string; name: string; lastUpdate: number }>>(new Map());
   /** Active pointer gesture, so a drag knows what it is manipulating. */
   const gesture = useRef<
     | { kind: "pan"; lastX: number; lastY: number }
@@ -447,12 +507,9 @@ export function BoardSection({ boardId }: { boardId: string }) {
       selection: box,
       lasso: lasso.current ?? null,
       cursor: cursor.current,
-      remoteCursors: doc.remoteUsers.map(u => ({
-        userId: u.userId,
-        userName: u.userName,
-        color: u.color,
-        x: u.cursor.x,
-        y: u.cursor.y
+      remoteCursors: Array.from(remoteCursors.current.entries()).map(([userId, data]) => ({
+        userId,
+        ...data,
       })),
     });
   });
@@ -1027,9 +1084,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
     const screen = screenPosition(event);
     const world = screenToWorld(camera.current, screen.x, screen.y);
 
-    // Send cursor position to other clients (throttled in hook)
-    doc.collab.sendCursor(world.x, world.y);
-
     if (active.kind === "pan") {
       camera.current = panBy(
         camera.current,
@@ -1038,6 +1092,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
       );
       active.lastX = screen.x;
       active.lastY = screen.y;
+      // Send cursor position for remote users
+      sync.sendCursor(world.x, world.y, style.color);
       schedulePaint();
       return;
     }
@@ -1048,6 +1104,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
         y: screen.y,
         radius: ERASE_BRUSH_RADIUS * camera.current.scale,
       };
+      // Send cursor position for remote users
+      sync.sendCursor(world.x, world.y, style.color);
       const removed = doc.eraseAt(world.x, world.y, ERASE_TOLERANCE);
       if (removed > 0) {
         schedulePaint();
@@ -1084,7 +1142,10 @@ export function BoardSection({ boardId }: { boardId: string }) {
       const dy = world.y - active.lastWorld.y;
       active.lastWorld = world;
       if (dx !== 0 || dy !== 0) {
-        doc.updateItem(item.id, { x: item.x + dx, y: item.y + dy }, true);
+        const newX = item.x + dx;
+        const newY = item.y + dy;
+        doc.updateItem(item.id, { x: newX, y: newY }, true);
+        sync.sendItemUpdate({ ...item, x: newX, y: newY });
         schedulePaint();
       }
       return;
@@ -1096,11 +1157,14 @@ export function BoardSection({ boardId }: { boardId: string }) {
         world.y - active.center.y,
         world.x - active.center.x,
       );
+      const newRotation = active.startRotation + (angle - active.startAngle);
       doc.updateItem(
         active.itemId,
-        { rotation: active.startRotation + (angle - active.startAngle) },
+        { rotation: newRotation },
         true,
       );
+      const item = docItems.current.find((i) => i.id === active.itemId);
+      if (item) sync.sendItemUpdate({ ...item, rotation: newRotation });
       schedulePaint();
       return;
     }
@@ -1116,6 +1180,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
         Math.hypot(world.x - active.center.x, world.y - active.center.y) || 1;
       const scale = Math.max(0.05, active.startScale * (distance / active.startDistance));
       doc.updateItem(active.itemId, { scale }, true);
+      const item = docItems.current.find((i) => i.id === active.itemId);
+      if (item) sync.sendItemUpdate({ ...item, scale });
       schedulePaint();
       return;
     }
@@ -1187,6 +1253,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
       t: Math.round(performance.now() - started),
     };
     drafting.current = [...(drafting.current ?? []), next];
+    // Send cursor position for remote users to see
+    sync.sendCursor(world.x, world.y, style.color);
     schedulePaint();
   };
 
@@ -1245,18 +1313,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
       // The live moves already mutated the document; commit one repaint.
       doc.endEdit();
       doc.bump();
-      
-      // Send updated selection to other clients
-      const selection = doc.selectedStrokes();
-      if (selection.length > 0) {
-        const bounds = selectionBounds(selection);
-        if (bounds) {
-          doc.collab.sendSelection({
-            bounds,
-            rotation: 0
-          });
-        }
-      }
       return;
     }
 
@@ -1271,18 +1327,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
       // The live transforms already mutated the document; commit one repaint.
       doc.endEdit();
       doc.bump();
-      
-      // Send updated selection to other clients
-      const selection = doc.selectedStrokes();
-      if (selection.length > 0) {
-        const bounds = selectionBounds(selection);
-        if (bounds) {
-          doc.collab.sendSelection({
-            bounds,
-            rotation: 0 // Could track actual rotation
-          });
-        }
-      }
       return;
     }
 
@@ -1299,12 +1343,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
     ) {
       doc.endEdit();
       doc.bump();
-      
-      // Send item update to other clients
-      const item = doc.items.current.find((i) => i.id === active.itemId);
-      if (item) {
-        doc.collab.sendItem(item, 'update');
-      }
       return;
     }
 
@@ -1373,6 +1411,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
     doc.addItem(item);
     doc.endEdit();
     doc.selectItem(item.id);
+    sync.sendItemAdd(item);
     schedulePaint();
   };
 
