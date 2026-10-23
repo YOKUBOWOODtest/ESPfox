@@ -53,6 +53,13 @@ export interface ImportedItem {
   /** Playback length in seconds; zero for images. */
   duration: number;
   createdAt: number;
+  /**
+   * The device that imported the media.
+   *
+   * Like a stroke's author, this keeps deletions honest: only the owner (or
+   * the board's host) may remove somebody else's item.
+   */
+  authorId?: string;
 }
 
 /** The media a file or a recording contributes, before it is placed. */
@@ -67,10 +74,13 @@ export interface ImportedMedia {
 
 let nextItemId = 0;
 
-/** Monotonic ids; items never cross a serialisation boundary in this build. */
+/** An item id that cannot collide with one minted on another device. */
 export function importedItemId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `i-${crypto.randomUUID()}`;
+  }
   nextItemId += 1;
-  return `i${nextItemId}`;
+  return `i${Date.now().toString(36)}-${nextItemId}`;
 }
 
 /** The size of the card an audio or voice item is drawn on. */
@@ -82,6 +92,7 @@ export function createImportedItem(
   media: ImportedMedia,
   x: number,
   y: number,
+  authorId?: string,
 ): ImportedItem {
   return {
     id: importedItemId(),
@@ -99,6 +110,7 @@ export function createImportedItem(
     locked: false,
     duration: media.duration,
     createdAt: Date.now(),
+    ...(authorId ? { authorId } : {}),
   };
 }
 

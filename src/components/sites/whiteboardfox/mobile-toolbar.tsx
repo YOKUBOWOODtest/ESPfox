@@ -43,6 +43,9 @@ interface MobileToolbarProps {
   onSettingsChange: (patch: Partial<BoardSettings>) => void;
   flipColors: boolean;
   onFlipColorsChange: (value: boolean) => void;
+  /** Host-only moderation from the participants list. */
+  onKick?: (participant: Participant) => void;
+  onBan?: (participant: Participant) => void;
 }
 
 export function MobileToolbar({
@@ -67,6 +70,8 @@ export function MobileToolbar({
   onSettingsChange,
   flipColors,
   onFlipColorsChange,
+  onKick,
+  onBan,
 }: MobileToolbarProps) {
   const [showMore, setShowMore] = useState(false);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -267,6 +272,8 @@ export function MobileToolbar({
           flipColors={flipColors}
           onFlipColorsChange={onFlipColorsChange}
           isHost={isHost}
+          onKick={onKick}
+          onBan={onBan}
         />
       )}
     </div>
@@ -323,6 +330,8 @@ function MobileOptionsPanel({
   flipColors,
   onFlipColorsChange,
   isHost,
+  onKick,
+  onBan,
 }: {
   onClose: () => void;
   participants: Participant[];
@@ -333,6 +342,8 @@ function MobileOptionsPanel({
   flipColors: boolean;
   onFlipColorsChange: (value: boolean) => void;
   isHost: boolean;
+  onKick?: (participant: Participant) => void;
+  onBan?: (participant: Participant) => void;
 }) {
   return (
     <div className="mobile-bottom-sheet" role="dialog" aria-label="Opciones de la pizarra">
@@ -358,6 +369,8 @@ function MobileOptionsPanel({
         flipColors={flipColors}
         onFlipColorsChange={onFlipColorsChange}
         isHost={isHost}
+        onKick={onKick}
+        onBan={onBan}
       />
     </div>
   );

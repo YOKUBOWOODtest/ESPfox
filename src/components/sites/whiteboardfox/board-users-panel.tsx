@@ -18,6 +18,8 @@ export function BoardUsersPanel({
   onSearchChange,
   onClose,
   embedded = false,
+  onKick,
+  onBan,
 }: {
   participants: Participant[];
   search: string;
@@ -25,6 +27,9 @@ export function BoardUsersPanel({
   onClose: () => void;
   /** When true, renders without absolute positioning for embedding in another panel. */
   embedded?: boolean;
+  /** Host-only moderation, offered on every row but this device's own. */
+  onKick?: (participant: Participant) => void;
+  onBan?: (participant: Participant) => void;
 }) {
   const visible = participants.filter((participant) =>
     `${participant.nickname} ${participant.deviceId}`
@@ -42,7 +47,12 @@ export function BoardUsersPanel({
             </colgroup>
             <tbody>
               {visible.map((participant) => (
-                <UserRow key={participant.key} participant={participant} />
+                <UserRow
+                  key={participant.key}
+                  participant={participant}
+                  onKick={onKick}
+                  onBan={onBan}
+                />
               ))}
             </tbody>
           </table>
@@ -111,7 +121,12 @@ export function BoardUsersPanel({
           </colgroup>
           <tbody>
             {visible.map((participant) => (
-              <UserRow key={participant.key} participant={participant} />
+              <UserRow
+                key={participant.key}
+                participant={participant}
+                onKick={onKick}
+                onBan={onBan}
+              />
             ))}
           </tbody>
         </table>
@@ -153,8 +168,18 @@ export function BoardUsersPanel({
  * The nickname uses the source's `.userName` link styling at a larger size, and
  * `.userDeviceId` carries the device id beneath it in small type.
  */
-function UserRow({ participant }: { participant: Participant }) {
+function UserRow({
+  participant,
+  onKick,
+  onBan,
+}: {
+  participant: Participant;
+  onKick?: (participant: Participant) => void;
+  onBan?: (participant: Participant) => void;
+}) {
   const user = useDeviceUser();
+  const canModerate =
+    participant.canBlock && !participant.self && Boolean(onKick) && Boolean(onBan);
   return (
     <tr data-self={participant.self ? "true" : "false"} data-testid="participant-row">
       <td>
@@ -182,6 +207,28 @@ function UserRow({ participant }: { participant: Participant }) {
           </span>
         </div>
       </td>
+      {canModerate && (
+        <td style={{ whiteSpace: "nowrap", verticalAlign: "middle" }}>
+          <button
+            type="button"
+            className="text-[11px] underline"
+            style={{ color: "#8a5a52", background: "none", border: 0, padding: "2px 4px", cursor: "pointer" }}
+            onClick={() => onKick?.(participant)}
+            data-testid="participant-kick"
+          >
+            Kick
+          </button>
+          <button
+            type="button"
+            className="text-[11px] underline"
+            style={{ color: "#b23a2a", background: "none", border: 0, padding: "2px 4px", cursor: "pointer" }}
+            onClick={() => onBan?.(participant)}
+            data-testid="participant-ban"
+          >
+            Ban
+          </button>
+        </td>
+      )}
     </tr>
   );
 }

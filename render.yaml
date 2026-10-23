@@ -3,10 +3,10 @@
 
 services:
   - type: web
-    name: whiteboardmod
+    name: pizarra-realtime
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: starter
+    plan: free
     region: oregon
     envVars:
       - key: NODE_ENV

@@ -12,10 +12,7 @@ export function useIsMobile(): boolean {
   useEffect(() => {
     const check = () => {
       const hasTouch =
-        "ontouchstart" in window ||
-        navigator.maxTouchPoints > 0 ||
-        // @ts-ignore
-        navigator.msMaxTouchPoints > 0;
+        "ontouchstart" in window || navigator.maxTouchPoints > 0;
       const isSmallScreen = window.innerWidth < 768;
       setIsMobile(hasTouch && isSmallScreen);
     };
@@ -52,10 +49,7 @@ export function useTouchGestures(
     const canvas = canvasRef.current;
     let initialDistance = 0;
     let initialScale = 1;
-    let initialCenter = { x: 0, y: 0 };
-    let initialCamera = { x: 0, y: 0, scale: 1 };
     let isPinching = false;
-    let lastTwoFingerCenter = { x: 0, y: 0 };
 
     const getTouchDistance = (touches: TouchList) => {
       if (touches.length < 2) return 0;
@@ -79,9 +73,6 @@ export function useTouchGestures(
         multiTouchActiveRef.current = true;
         initialDistance = getTouchDistance(e.touches);
         initialScale = camera.current.scale;
-        initialCenter = getTouchCenter(e.touches);
-        initialCamera = { ...camera.current };
-        lastTwoFingerCenter = initialCenter;
 
         // Prevenir scroll nativo y que React reciba pointer events
         e.preventDefault();
@@ -96,9 +87,6 @@ export function useTouchGestures(
           multiTouchActiveRef.current = true;
           initialDistance = getTouchDistance(e.touches);
           initialScale = camera.current.scale;
-          initialCenter = getTouchCenter(e.touches);
-          initialCamera = { ...camera.current };
-          lastTwoFingerCenter = initialCenter;
           e.preventDefault();
         }
         return;
@@ -158,9 +146,6 @@ export function useTouchGestures(
       if (e.touches.length < 2) {
         isPinching = false;
         multiTouchActiveRef.current = false;
-      } else {
-        // Recalcular centro si un dedo se levantó
-        lastTwoFingerCenter = getTouchCenter(e.touches);
       }
     };
 

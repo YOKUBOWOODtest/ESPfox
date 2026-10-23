@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createStroke,
   hitStroke,
@@ -28,13 +28,34 @@ import type { ImportedItem } from "@/lib/board/imported";
 
 export interface BoardDocCallbacks {
   /** Called when a new stroke is committed. */
-  onStrokeCommit?: (stroke: import("@/lib/board/stroke").Stroke) => void;
-  /** Called when strokes are removed (by erase). */
+  onStrokeCommit?: (stroke: Stroke) => void;
+  /** Called when strokes are removed, by the eraser or by undo. */
   onStrokesRemove?: (strokeIds: string[]) => void;
   /** Called when a stroke's transform changes. */
-  onStrokeTransform?: (strokeId: string, transform: import("@/lib/board/stroke").Transform) => void;
-  /** Called when items change. */
-  onItemsChange?: (items: import("@/lib/board/imported").ImportedItem[]) => void;
+  onStrokeTransform?: (strokeId: string, transform: Transform) => void;
+  onItemAdd?: (item: ImportedItem) => void;
+  /**
+   * Called when an imported item changes.
+   *
+   * The patch is what changed, not the whole item: an imported image can be
+   * megabytes of data URL, and sending that on every pointer move would swamp
+   * the connection.
+   */
+  onItemUpdate?: (itemId: string, patch: Partial<ImportedItem>) => void;
+  onItemRemove?: (itemId: string) => void;
+  onItemsReorder?: (orderedIds: string[]) => void;
+}
+
+export interface BoardDocOptions extends BoardDocCallbacks {
+  /** This device, stamped on new ink so ownership survives a reload. */
+  selfId: string;
+  /**
+   * Whether this device is the board's host.
+   *
+   * A function rather than a value: the host is decided by the collaboration
+   * server after the document hook has been created.
+   */
+  isHost?: () => boolean;
 }
 
 /** How many steps the undo history keeps. */
@@ -48,7 +69,18 @@ interface DocSnapshot {
   selectedItemId: string | null;
 }
 
-export function useBoardDoc(callbacks?: BoardDocCallbacks) {
+export function useBoardDoc(options?: BoardDocOptions) {
+  const callbacksRef = useRef<BoardDocCallbacks | undefined>(options);
+  const selfRef = useRef(options?.selfId ?? "");
+  const isHostRef = useRef(options?.isHost);
+  // The board re-renders while a gesture is in progress, so the refs are kept
+  // current after every commit rather than during render.
+  useEffect(() => {
+    callbacksRef.current = options;
+    selfRef.current = options?.selfId ?? "";
+    isHostRef.current = options?.isHost;
+  });
+
   const strokes = useRef<Stroke[]>([]);
   const selectedIds = useRef<Set<string>>(new Set());
   /** The imported media the board carries. */
@@ -73,16 +105,32 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
     setVersion((value) => value + 1);
   }, []);
 
+  /**
+   * Whether this device may change or delete a record.
+   *
+   * Your own ink is always yours; the board's host can also manage everybody
+   * else's. Records saved before collaboration have no author and stay shared.
+   */
+  const mayManage = useCallback((authorId?: string): boolean => {
+    if (!authorId) {
+      return true;
+    }
+    return authorId === selfRef.current || Boolean(isHostRef.current?.());
+  }, []);
+
   /** Copies the document deeply enough to be restored later. */
-  const capture = useCallback((): DocSnapshot => ({
-    strokes: strokes.current.map((stroke) => ({
-      ...stroke,
-      transform: { ...stroke.transform },
-    })),
-    items: items.current.map((item) => ({ ...item })),
-    selectedIds: new Set(selectedIds.current),
-    selectedItemId: selectedItemId.current,
-  }), []);
+  const capture = useCallback(
+    (): DocSnapshot => ({
+      strokes: strokes.current.map((stroke) => ({
+        ...stroke,
+        transform: { ...stroke.transform },
+      })),
+      items: items.current.map((item) => ({ ...item })),
+      selectedIds: new Set(selectedIds.current),
+      selectedItemId: selectedItemId.current,
+    }),
+    [],
+  );
 
   /**
    * Starts an edit.
@@ -131,12 +179,12 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
       if (history.current.length > HISTORY_LIMIT) {
         history.current.shift();
       }
-      const newStroke = createStroke(points, style);
+      const newStroke = createStroke(points, style, selfRef.current || undefined);
       strokes.current = [...strokes.current, newStroke];
       bump();
-      callbacks?.onStrokeCommit?.(newStroke);
+      callbacksRef.current?.onStrokeCommit?.(newStroke);
     },
-    [bump, capture, callbacks],
+    [bump, capture],
   );
 
   /**
@@ -147,17 +195,22 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
    * which painted opaque pixels over a single flat point array. Returns how
    * many strokes were removed so the caller can decide whether to flash a
    * message.
+   *
+   * Only the strokes this device may manage are hit: normally that is your own
+   * ink, with the host additionally able to erase anybody's.
    */
   const eraseAt = useCallback(
     (worldX: number, worldY: number, radius: number): number => {
-      const remaining = strokes.current.filter(
-        (stroke) => !hitStroke(stroke, worldX, worldY, radius),
-      );
-      const removed = strokes.current.length - remaining.length;
-      if (removed > 0) {
-        const removedIds = strokes.current
-          .filter((s) => !remaining.includes(s))
-          .map((s) => s.id);
+      const removedStrokes: Stroke[] = [];
+      const remaining = strokes.current.filter((stroke) => {
+        const hit = hitStroke(stroke, worldX, worldY, radius);
+        if (hit && mayManage(stroke.authorId)) {
+          removedStrokes.push(stroke);
+          return false;
+        }
+        return true;
+      });
+      if (removedStrokes.length > 0) {
         strokes.current = remaining;
         // An erased stroke must not stay in the selection.
         if (selectedIds.current.size > 0) {
@@ -167,11 +220,13 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
           );
         }
         bump();
-        callbacks?.onStrokesRemove?.(removedIds);
+        callbacksRef.current?.onStrokesRemove?.(
+          removedStrokes.map((stroke) => stroke.id),
+        );
       }
-      return removed;
+      return removedStrokes.length;
     },
-    [bump, callbacks],
+    [bump, mayManage],
   );
 
   /** Replaces the selection with everything the lasso touched. */
@@ -212,8 +267,13 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
    */
   const addItem = useCallback(
     (item: ImportedItem) => {
-      items.current = [...items.current, item];
+      const stored: ImportedItem = {
+        ...item,
+        authorId: item.authorId ?? selfRef.current,
+      };
+      items.current = [...items.current, stored];
       bump();
+      callbacksRef.current?.onItemAdd?.(stored);
     },
     [bump],
   );
@@ -226,11 +286,19 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
    */
   const updateItem = useCallback(
     (id: string, patch: Partial<ImportedItem>, live: boolean) => {
-      items.current = items.current.map((item) =>
-        item.id === id ? { ...item, ...patch } : item,
-      );
+      let updated: ImportedItem | null = null;
+      items.current = items.current.map((item) => {
+        if (item.id !== id) {
+          return item;
+        }
+        updated = { ...item, ...patch };
+        return updated;
+      });
       if (!live) {
         bump();
+      }
+      if (updated) {
+        callbacksRef.current?.onItemUpdate?.(id, patch);
       }
     },
     [bump],
@@ -239,17 +307,18 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
   /** Removes an imported item and forgets its selection. */
   const removeItem = useCallback(
     (id: string) => {
-      const remaining = items.current.filter((item) => item.id !== id);
-      if (remaining.length === items.current.length) {
+      const source = items.current.find((item) => item.id === id);
+      if (!source || !mayManage(source.authorId)) {
         return;
       }
-      items.current = remaining;
+      items.current = items.current.filter((item) => item.id !== id);
       if (selectedItemId.current === id) {
         selectedItemId.current = null;
       }
       bump();
+      callbacksRef.current?.onItemRemove?.(id);
     },
-    [bump],
+    [bump, mayManage],
   );
 
   /** Copies an imported item, offset a little so both stay visible. */
@@ -261,17 +330,18 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
       }
       const copy: ImportedItem = {
         ...source,
-        id: `${source.id}-copy-${items.current.length}`,
+        id: `${source.id}-copy-${Date.now().toString(36)}`,
         x: source.x + 24,
         y: source.y + 24,
         createdAt: Date.now(),
+        authorId: selfRef.current,
       };
       items.current = [...items.current, copy];
       selectedItemId.current = copy.id;
       bump();
-      callbacks?.onItemsChange?.(items.current);
+      callbacksRef.current?.onItemAdd?.(copy);
     },
-    [bump, callbacks],
+    [bump],
   );
 
   /** Sends an imported item to the front or to the back of the stack. */
@@ -284,9 +354,11 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
       const rest = items.current.filter((item) => item.id !== id);
       items.current = toFront ? [...rest, source] : [source, ...rest];
       bump();
-      callbacks?.onItemsChange?.(items.current);
+      callbacksRef.current?.onItemsReorder?.(
+        items.current.map((item) => item.id),
+      );
     },
-    [bump, callbacks],
+    [bump],
   );
 
   /**
@@ -309,6 +381,106 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
     [bump],
   );
 
+  /* --- Incoming collaboration -------------------------------------------- */
+
+  /**
+   * Merges a stroke that another device drew.
+   *
+   * Remote state is applied here rather than by the board reaching into the
+   * document's refs: the document owns its data, and a duplicate broadcast
+   * (a reconnect, for instance) must not add the same stroke twice.
+   */
+  const addRemoteStroke = useCallback(
+    (stroke: Stroke) => {
+      if (strokes.current.some((entry) => entry.id === stroke.id)) {
+        return;
+      }
+      strokes.current = [...strokes.current, stroke];
+      bump();
+    },
+    [bump],
+  );
+
+  /** Removes strokes that somebody else erased (or that undo removed). */
+  const removeRemoteStrokes = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) {
+        return;
+      }
+      const removed = new Set(ids);
+      const next = strokes.current.filter((stroke) => !removed.has(stroke.id));
+      if (next.length === strokes.current.length) {
+        return;
+      }
+      strokes.current = next;
+      if (selectedIds.current.size > 0) {
+        selectedIds.current = new Set(
+          [...selectedIds.current].filter((id) => !removed.has(id)),
+        );
+      }
+      bump();
+    },
+    [bump],
+  );
+
+  /** Applies a transform that another device made to its own stroke. */
+  const transformRemoteStroke = useCallback(
+    (strokeId: string, transform: Transform) => {
+      strokes.current = strokes.current.map((stroke) =>
+        stroke.id === strokeId ? { ...stroke, transform } : stroke,
+      );
+    },
+    [],
+  );
+
+  /** Merges imported media that another device added. */
+  const addRemoteItem = useCallback(
+    (item: ImportedItem) => {
+      if (items.current.some((entry) => entry.id === item.id)) {
+        return;
+      }
+      items.current = [...items.current, item];
+      bump();
+    },
+    [bump],
+  );
+
+  /** Applies a move, resize, rotation or option change from another device. */
+  const updateRemoteItem = useCallback((item: ImportedItem) => {
+    items.current = items.current.map((entry) =>
+      entry.id === item.id ? item : entry,
+    );
+  }, []);
+
+  /** Removes imported media that its owner or the host deleted. */
+  const removeRemoteItem = useCallback(
+    (itemId: string) => {
+      const next = items.current.filter((entry) => entry.id !== itemId);
+      if (next.length === items.current.length) {
+        return;
+      }
+      items.current = next;
+      if (selectedItemId.current === itemId) {
+        selectedItemId.current = null;
+      }
+      bump();
+    },
+    [bump],
+  );
+
+  /** Applies the stacking order another device chose. */
+  const applyItemOrder = useCallback((orderedIds: string[]) => {
+    const byId = new Map(items.current.map((item) => [item.id, item]));
+    const ordered = orderedIds
+      .map((id) => byId.get(id))
+      .filter((item): item is ImportedItem => Boolean(item));
+    const seen = new Set(ordered.map((item) => item.id));
+    items.current = [
+      ...ordered,
+      ...items.current.filter((item) => !seen.has(item.id)),
+    ];
+  }, []);
+
   const selectedStrokes = useCallback(
     () => strokes.current.filter((stroke) => selectedIds.current.has(stroke.id)),
     [],
@@ -329,7 +501,7 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
       strokes.current = strokes.current.map((stroke) => {
         if (selectedIds.current.has(stroke.id)) {
           const newTransform = multiply(transform, stroke.transform);
-          callbacks?.onStrokeTransform?.(stroke.id, newTransform);
+          callbacksRef.current?.onStrokeTransform?.(stroke.id, newTransform);
           return { ...stroke, transform: newTransform };
         }
         return stroke;
@@ -338,7 +510,7 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
         bump();
       }
     },
-    [bump, callbacks],
+    [bump],
   );
 
   const moveSelection = useCallback(
@@ -362,14 +534,6 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
     [transformSelection],
   );
 
-  /**
-   * Undoes the last edit.
-   *
-   * The history holds the document *before* each edit, so undo restores the
-   * last snapshot. That covers a drawn stroke, an erased one and — the point
-   * of the history — a change made with the Select tool, whether it moved,
-   * scaled or rotated the selection.
-   */
   /**
    * The document, as it is saved.
    *
@@ -411,23 +575,134 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
     [bump],
   );
 
+  /**
+   * Undoes the last local edit.
+   *
+   * Undo is personal. It rewinds this device's last action, but it never
+   * deletes, restores or rewinds work that belongs to somebody else: remote
+   * ink that arrived after the snapshot is kept, and remote ink that has since
+   * been erased is not resurrected.
+   */
   const undo = useCallback((): boolean => {
+    const beforeStrokes = strokes.current;
+    const beforeItems = items.current;
     const previous = history.current.pop();
+
     if (!previous) {
-      // Nothing to restore: fall back to the source's behaviour of dropping
-      // the most recently drawn stroke.
-      if (strokes.current.length === 0) {
-        return false;
+      // Nothing to restore: drop this device's most recent stroke.
+      for (let index = beforeStrokes.length - 1; index >= 0; index -= 1) {
+        const stroke = beforeStrokes[index];
+        if (!stroke.authorId || stroke.authorId === selfRef.current) {
+          strokes.current = beforeStrokes.filter((_, i) => i !== index);
+          bump();
+          callbacksRef.current?.onStrokesRemove?.([stroke.id]);
+          return true;
+        }
       }
-      strokes.current = strokes.current.slice(0, -1);
-      bump();
-      return true;
+      return false;
     }
-    strokes.current = previous.strokes;
-    items.current = previous.items;
-    selectedIds.current = previous.selectedIds;
+
+    const restoreStrokes = (): Stroke[] => {
+      const currentById = new Map(beforeStrokes.map((stroke) => [stroke.id, stroke]));
+      const restored: Stroke[] = [];
+      const seen = new Set<string>();
+      for (const stroke of previous.strokes) {
+        const remote = Boolean(stroke.authorId) && stroke.authorId !== selfRef.current;
+        if (remote) {
+          const live = currentById.get(stroke.id);
+          if (!live) {
+            continue;
+          }
+          restored.push(live);
+        } else {
+          restored.push(stroke);
+        }
+        seen.add(stroke.id);
+      }
+      for (const stroke of beforeStrokes) {
+        const remote = Boolean(stroke.authorId) && stroke.authorId !== selfRef.current;
+        if (remote && !seen.has(stroke.id)) {
+          restored.push(stroke);
+          seen.add(stroke.id);
+        }
+      }
+      return restored;
+    };
+
+    const restoreItems = (): ImportedItem[] => {
+      const currentById = new Map(beforeItems.map((item) => [item.id, item]));
+      const restored: ImportedItem[] = [];
+      const seen = new Set<string>();
+      for (const item of previous.items) {
+        const remote = Boolean(item.authorId) && item.authorId !== selfRef.current;
+        if (remote) {
+          const live = currentById.get(item.id);
+          if (!live) {
+            continue;
+          }
+          restored.push(live);
+        } else {
+          restored.push(item);
+        }
+        seen.add(item.id);
+      }
+      for (const item of beforeItems) {
+        const remote = Boolean(item.authorId) && item.authorId !== selfRef.current;
+        if (remote && !seen.has(item.id)) {
+          restored.push(item);
+          seen.add(item.id);
+        }
+      }
+      return restored;
+    };
+
+    const restoredStrokes = restoreStrokes();
+    const restoredItems = restoreItems();
+    strokes.current = restoredStrokes;
+    items.current = restoredItems;
+    const alive = new Set(restoredStrokes.map((stroke) => stroke.id));
+    selectedIds.current = new Set(
+      [...previous.selectedIds].filter((id) => alive.has(id)),
+    );
     selectedItemId.current = previous.selectedItemId;
     bump();
+
+    // Push the difference to the other boards so undo is not a private lie.
+    const afterStrokes = new Set(restoredStrokes.map((stroke) => stroke.id));
+    const beforeStrokesById = new Map(beforeStrokes.map((stroke) => [stroke.id, stroke]));
+    const removedIds = beforeStrokes
+      .filter((stroke) => !afterStrokes.has(stroke.id))
+      .map((stroke) => stroke.id);
+    if (removedIds.length > 0) {
+      callbacksRef.current?.onStrokesRemove?.(removedIds);
+    }
+    for (const stroke of restoredStrokes) {
+      if (!beforeStrokesById.has(stroke.id)) {
+        callbacksRef.current?.onStrokeCommit?.(stroke);
+      } else if (
+        stroke.authorId === selfRef.current &&
+        beforeStrokesById.get(stroke.id)?.transform !== stroke.transform
+      ) {
+        callbacksRef.current?.onStrokeTransform?.(stroke.id, stroke.transform);
+      }
+    }
+
+    const afterItems = new Set(restoredItems.map((item) => item.id));
+    const beforeItemsById = new Map(beforeItems.map((item) => [item.id, item]));
+    for (const item of beforeItems) {
+      if (!afterItems.has(item.id)) {
+        callbacksRef.current?.onItemRemove?.(item.id);
+      }
+    }
+    for (const item of restoredItems) {
+      const before = beforeItemsById.get(item.id);
+      if (!before) {
+        callbacksRef.current?.onItemAdd?.(item);
+      } else if (before !== item && item.authorId === selfRef.current) {
+        callbacksRef.current?.onItemUpdate?.(item.id, item);
+      }
+    }
+
     return true;
   }, [bump]);
 
@@ -478,6 +753,13 @@ export function useBoardDoc(callbacks?: BoardDocCallbacks) {
     selectItem,
     exportDocument,
     importDocument,
+    addRemoteStroke,
+    removeRemoteStrokes,
+    transformRemoteStroke,
+    addRemoteItem,
+    updateRemoteItem,
+    removeRemoteItem,
+    applyItemOrder,
   };
 }
 

@@ -1,275 +1,453 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
-import { io, Socket } from "socket.io-client";
-import type { Stroke, Point, StrokeStyle, Transform } from "@/lib/board/stroke";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { io, type Socket } from "socket.io-client";
+import type { Stroke, Transform } from "@/lib/board/stroke";
 import type { ImportedItem } from "@/lib/board/imported";
-import type { RoomMessage, RoomReaction } from "@/lib/board/room";
 
-interface UserInfo {
+/**
+ * Live collaboration.
+ *
+ * One Socket.io connection per board. Every finished stroke, imported item and
+ * cursor position goes through the server, which broadcasts it to the other
+ * people on the same board — whether they are on a laptop or a phone.
+ *
+ * The callbacks the board passes in change on every render, so they are kept
+ * in a ref: the effect itself only depends on the board's identity. Without
+ * that, the board re-rendering twice a second would tear the socket down and
+ * reconnect it just as often.
+ */
+
+export interface SyncUser {
   id: string;
   name: string;
   hue: number;
   isHost: boolean;
-  cursor?: { x: number; y: number; color: string };
 }
 
-interface BoardState {
+export interface SyncServerState {
   strokes: Stroke[];
   items: ImportedItem[];
-  users: UserInfo[];
+  users: SyncUser[];
   hostId: string | null;
   isHost: boolean;
-  settings: any;
-  myId: string;
 }
 
-interface UseBoardSyncOptions {
+export interface UseBoardSyncOptions {
   boardId: string;
   userId: string;
   userName: string;
   userHue: number;
-  onStrokesChange: (strokes: Stroke[]) => void;
-  onItemsChange: (items: ImportedItem[]) => void;
-  onUsersChange: (users: UserInfo[]) => void;
-  onHostChange: (isHost: boolean, hostId: string | null) => void;
-  onSettingsChange: (settings: any) => void;
-  onCursorUpdate: (userId: string, x: number, y: number, color: string, name: string) => void;
+  /** The socket is only opened once the local document has been restored. */
+  enabled: boolean;
+  /** What this browser has on the board, used to seed an empty server. */
+  getLocalDocument: () => { strokes: Stroke[]; items: ImportedItem[] };
+  /** Full board state from the server, or from the host's seed. */
+  onServerState: (state: SyncServerState) => void;
+  onStrokeAdd: (stroke: Stroke) => void;
+  onStrokesRemove: (strokeIds: string[]) => void;
+  onStrokeTransform: (strokeId: string, transform: Transform) => void;
+  onItemAdd: (item: ImportedItem) => void;
+  onItemUpdate: (item: ImportedItem) => void;
+  onItemRemove: (itemId: string) => void;
+  onItemsReorder: (orderedIds: string[]) => void;
+  onBoardCleared: () => void;
+  onCursorUpdate: (
+    userId: string,
+    x: number,
+    y: number,
+    color: string,
+    name: string,
+  ) => void;
   onCursorRemove: (userId: string) => void;
-  onMessage: (message: any) => void;
-  onReaction: (reaction: any) => void;
   onKicked: () => void;
   onBanned: () => void;
-  onError: (message: string) => void;
+  onError?: (message: string) => void;
 }
 
-export function useBoardSync({
-  boardId,
-  userId,
-  userName,
-  userHue,
-  onStrokesChange,
-  onItemsChange,
-  onUsersChange,
-  onHostChange,
-  onSettingsChange,
-  onCursorUpdate,
-  onCursorRemove,
-  onMessage,
-  onReaction,
-  onKicked,
-  onBanned,
-  onError,
-}: UseBoardSyncOptions) {
+export interface BoardSync {
+  connected: boolean;
+  users: SyncUser[];
+  hostId: string | null;
+  /** Whether this device is the board's host, as the server sees it. */
+  isHost: boolean;
+  sendStroke: (stroke: Stroke) => void;
+  sendStrokeRemove: (strokeIds: string[]) => void;
+  sendStrokeTransform: (strokeId: string, transform: Transform) => void;
+  sendItemAdd: (item: ImportedItem) => void;
+  sendItemUpdate: (itemId: string, patch: Partial<ImportedItem>) => void;
+  sendItemRemove: (itemId: string) => void;
+  sendItemsReorder: (orderedIds: string[]) => void;
+  sendCursor: (x: number, y: number, color: string) => void;
+  sendClear: () => void;
+  sendKick: (targetUserId: string) => void;
+  sendBan: (targetUserId: string) => void;
+}
+
+/** How often cursor and transform updates leave the device, at most. */
+const CURSOR_INTERVAL_MS = 50;
+const LIVE_UPDATE_INTERVAL_MS = 40;
+
+export function useBoardSync(options: UseBoardSyncOptions): BoardSync {
+  const optionsRef = useRef(options);
+  // Callbacks change on every render; store them after commit so the socket
+  // effect can keep its short dependency list and stay connected.
+  useEffect(() => {
+    optionsRef.current = options;
+  });
+
   const socketRef = useRef<Socket | null>(null);
   const [connected, setConnected] = useState(false);
-  const cursorThrottleRef = useRef<Map<string, number>>(new Map());
-  const strokesRef = useRef<Stroke[]>([]);
-  const itemsRef = useRef<ImportedItem[]>([]);
-  const usersRef = useRef<UserInfo[]>([]);
+  const [users, setUsers] = useState<SyncUser[]>([]);
+  const [hostId, setHostId] = useState<string | null>(null);
+  const [isHost, setIsHost] = useState(false);
+
+  const cursorSentAt = useRef(0);
+  const pendingItems = useRef(new Map<string, Partial<ImportedItem>>());
+  const itemTimers = useRef(new Map<string, number>());
+  const pendingTransforms = useRef(new Map<string, Transform>());
+  const transformTimers = useRef(new Map<string, number>());
+
+  const { boardId, userId, userName, userHue, enabled } = options;
 
   useEffect(() => {
-    // Helper to resolve functional updates
-    const resolveStrokes = (updater: Stroke[] | ((prev: Stroke[]) => Stroke[])) => {
-      const resolved = typeof updater === "function" ? updater(strokesRef.current) : updater;
-      strokesRef.current = resolved;
-      onStrokesChange(resolved);
-    };
+    if (!enabled || !boardId || !userId) {
+      return;
+    }
 
-    const resolveItems = (updater: ImportedItem[] | ((prev: ImportedItem[]) => ImportedItem[])) => {
-      const resolved = typeof updater === "function" ? updater(itemsRef.current) : updater;
-      itemsRef.current = resolved;
-      onItemsChange(resolved);
-    };
-
-    const resolveUsers = (updater: UserInfo[] | ((prev: UserInfo[]) => UserInfo[])) => {
-      const resolved = typeof updater === "function" ? updater(usersRef.current) : updater;
-      usersRef.current = resolved;
-      onUsersChange(resolved);
-    };
-
-    const socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || "", {
+    const socket = io({
       transports: ["websocket", "polling"],
       reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: Number.POSITIVE_INFINITY,
     });
-
     socketRef.current = socket;
 
+    const applyState = (state: SyncServerState) => {
+      optionsRef.current.onServerState(state);
+      setUsers(state.users ?? []);
+      setHostId(state.hostId ?? null);
+      setIsHost(Boolean(state.isHost));
+    };
+
     socket.on("connect", () => {
-      console.log("[Socket] Connected:", socket.id);
       setConnected(true);
-      socket.emit("board:join", { boardId, userId, name: userName, hue: userHue });
+      socket.emit("board:join", {
+        boardId,
+        userId,
+        name: userName,
+        hue: userHue,
+      });
     });
 
-    socket.on("disconnect", (reason) => {
-      console.log("[Socket] Disconnected:", reason);
+    socket.on("disconnect", () => {
       setConnected(false);
     });
 
-    socket.on("connect_error", (err) => {
-      console.error("[Socket] Connection error:", err);
+    socket.on("connect_error", () => {
       setConnected(false);
     });
 
-    // Initial board state
-    socket.on("board:state", (state: any) => {
-      console.log("[Socket] Received board state");
-      resolveStrokes(state.strokes);
-      resolveItems(state.items);
-      resolveUsers(state.users);
-      onHostChange(state.isHost, state.hostId);
-      onSettingsChange(state.settings);
+    socket.on("board:state", (state: unknown) => {
+      const incoming = (state ?? {}) as Partial<SyncServerState> & { boardId?: string };
+      const boardState: SyncServerState = {
+        strokes: Array.isArray(incoming.strokes) ? incoming.strokes : [],
+        items: Array.isArray(incoming.items) ? incoming.items : [],
+        users: Array.isArray(incoming.users) ? incoming.users : [],
+        hostId: typeof incoming.hostId === "string" ? incoming.hostId : null,
+        isHost: Boolean(incoming.isHost),
+      };
+      const empty = boardState.strokes.length === 0 && boardState.items.length === 0;
+
+      if (!empty) {
+        applyState(boardState);
+        return;
+      }
+
+      setUsers(boardState.users);
+      setHostId(boardState.hostId);
+      setIsHost(boardState.isHost);
+
+      if (boardState.isHost) {
+        // The board predates the server: upload what this browser has instead
+        // of wiping it. Everybody else receives it through `board:seeded`.
+        const local = optionsRef.current.getLocalDocument();
+        if (local.strokes.length > 0 || local.items.length > 0) {
+          socket.emit("board:seed", {
+            boardId,
+            strokes: local.strokes,
+            items: local.items,
+          });
+        }
+      } else {
+        // A stale local copy must not leak onto the shared board.
+        optionsRef.current.onServerState(boardState);
+      }
     });
 
-    // Stroke events
-    socket.on("stroke:add", (stroke: any) => {
-      resolveStrokes((prev: Stroke[]) => [...prev, stroke]);
+    socket.on("board:seeded", (state: unknown) => {
+      const incoming = (state ?? {}) as { strokes?: Stroke[]; items?: ImportedItem[] };
+      optionsRef.current.onServerState({
+        strokes: Array.isArray(incoming.strokes) ? incoming.strokes : [],
+        items: Array.isArray(incoming.items) ? incoming.items : [],
+        users: [],
+        hostId: null,
+        isHost: false,
+      });
+    });
+
+    socket.on("stroke:add", (stroke: Stroke) => {
+      optionsRef.current.onStrokeAdd(stroke);
     });
 
     socket.on("stroke:remove", (strokeIds: string[]) => {
-      resolveStrokes((prev: Stroke[]) => prev.filter((s: Stroke) => !strokeIds.includes(s.id)));
+      if (Array.isArray(strokeIds)) {
+        optionsRef.current.onStrokesRemove(strokeIds);
+      }
     });
 
-    socket.on("stroke:transform", (data: { strokeId: string; transform: any }) => {
-      resolveStrokes((prev: Stroke[]) =>
-        prev.map((s: Stroke) => (s.id === data.strokeId ? { ...s, transform: data.transform } : s))
-      );
+    socket.on("stroke:transform", (data: { strokeId: string; transform: Transform }) => {
+      optionsRef.current.onStrokeTransform(data.strokeId, data.transform);
     });
 
-    // Item events
-    socket.on("item:add", (item: any) => {
-      resolveItems((prev: ImportedItem[]) => [...prev, item]);
+    socket.on("item:add", (item: ImportedItem) => {
+      optionsRef.current.onItemAdd(item);
     });
 
-    socket.on("item:update", (item: any) => {
-      resolveItems((prev: ImportedItem[]) => prev.map((i: ImportedItem) => (i.id === item.id ? item : i)));
+    socket.on("item:update", (item: ImportedItem) => {
+      optionsRef.current.onItemUpdate(item);
     });
 
     socket.on("item:remove", (itemId: string) => {
-      resolveItems((prev: ImportedItem[]) => prev.filter((i: ImportedItem) => i.id !== itemId));
+      optionsRef.current.onItemRemove(itemId);
     });
 
-    // Board clear
+    socket.on("item:reorder", (data: { order: string[] }) => {
+      if (Array.isArray(data?.order)) {
+        optionsRef.current.onItemsReorder(data.order);
+      }
+    });
+
     socket.on("board:cleared", () => {
-      resolveStrokes([]);
-      resolveItems([]);
+      optionsRef.current.onBoardCleared();
     });
 
-    // User events
-    socket.on("user:joined", (user: any) => {
-      resolveUsers((prev: UserInfo[]) => [...prev, user]);
+    socket.on("cursor:update", (data: {
+      userId: string;
+      x: number;
+      y: number;
+      color: string;
+      name: string;
+    }) => {
+      optionsRef.current.onCursorUpdate(data.userId, data.x, data.y, data.color, data.name);
+    });
+
+    const syncUsers = (list: SyncUser[]) => {
+      setUsers(list);
+      setHostId((current) => {
+        const host = list.find((user) => user.isHost);
+        return host ? host.id : current;
+      });
+      setIsHost((current) => {
+        const self = list.find((user) => user.id === userId);
+        return self ? self.isHost : current;
+      });
+    };
+
+    socket.on("users:update", (list: SyncUser[]) => {
+      if (Array.isArray(list)) {
+        syncUsers(list);
+      }
+    });
+
+    socket.on("user:joined", (user: SyncUser) => {
+      setUsers((current) => {
+        const without = current.filter((entry) => entry.id !== user.id);
+        return [...without, user];
+      });
     });
 
     socket.on("user:left", (data: { userId: string }) => {
-      resolveUsers((prev: UserInfo[]) => prev.filter((u: UserInfo) => u.id !== data.userId));
-      onCursorRemove(data.userId);
+      optionsRef.current.onCursorRemove(data.userId);
+      setUsers((current) => current.filter((user) => user.id !== data.userId));
     });
 
-    socket.on("users:update", (users: UserInfo[]) => {
-      resolveUsers(users);
-    });
-
-    socket.on("host:changed", (data: { newHostId: string }) => {
-      resolveUsers((prev: UserInfo[]) =>
-        prev.map((u: UserInfo) => (u.id === data.newHostId ? { ...u, isHost: true } : u))
+    socket.on("host:changed", (data: { hostId: string | null }) => {
+      setHostId(data.hostId);
+      setIsHost(data.hostId === userId);
+      setUsers((current) =>
+        current.map((user) => ({ ...user, isHost: user.id === data.hostId })),
       );
     });
 
-    // Cursor updates
-    socket.on("cursor:update", (data: { userId: string; x: number; y: number; color: string; name: string }) => {
-      onCursorUpdate(data.userId, data.x, data.y, data.color, data.name);
-    });
-
-    // Settings
-    socket.on("settings:update", (settings: any) => {
-      onSettingsChange(settings);
-    });
-
-    // Moderation
     socket.on("board:kicked", () => {
-      onKicked();
+      optionsRef.current.onKicked();
     });
 
     socket.on("board:banned", () => {
-      onBanned();
+      optionsRef.current.onBanned();
     });
 
-    socket.on("error", (data: { message: string }) => {
-      onError(data.message);
+    socket.on("error", (data: { message?: string }) => {
+      if (data?.message) {
+        optionsRef.current.onError?.(data.message);
+      }
     });
+
+    const itemTimersAtUnmount = itemTimers.current;
+    const transformTimersAtUnmount = transformTimers.current;
 
     return () => {
       socket.emit("board:leave", { boardId });
+      socket.removeAllListeners();
       socket.disconnect();
+      socketRef.current = null;
+      setConnected(false);
+      for (const timer of itemTimersAtUnmount.values()) {
+        window.clearTimeout(timer);
+      }
+      for (const timer of transformTimersAtUnmount.values()) {
+        window.clearTimeout(timer);
+      }
+      itemTimersAtUnmount.clear();
+      transformTimersAtUnmount.clear();
     };
-  }, [boardId, userId, userName, userHue, onStrokesChange, onItemsChange, onUsersChange, onHostChange, onSettingsChange, onCursorUpdate, onCursorRemove, onMessage, onReaction, onKicked, onBanned, onError]);
+  }, [boardId, userId, userName, userHue, enabled]);
 
-  // Send stroke to server
-  const sendStroke = useCallback((stroke: any) => {
-    socketRef.current?.emit("stroke:add", { boardId, stroke });
-  }, [boardId]);
+  const sendStroke = useCallback(
+    (stroke: Stroke) => {
+      socketRef.current?.emit("stroke:add", { boardId, stroke });
+    },
+    [boardId],
+  );
 
-  const sendStrokeRemove = useCallback((strokeIds: string[]) => {
-    socketRef.current?.emit("stroke:remove", { boardId, strokeIds });
-  }, [boardId]);
+  const sendStrokeRemove = useCallback(
+    (strokeIds: string[]) => {
+      if (strokeIds.length > 0) {
+        socketRef.current?.emit("stroke:remove", { boardId, strokeIds });
+      }
+    },
+    [boardId],
+  );
 
-  const sendStrokeTransform = useCallback((strokeId: string, transform: any) => {
-    socketRef.current?.emit("stroke:transform", { boardId, strokeId, transform });
-  }, [boardId]);
+  const sendStrokeTransform = useCallback(
+    (strokeId: string, transform: Transform) => {
+      const socket = socketRef.current;
+      if (!socket) {
+        return;
+      }
+      pendingTransforms.current.set(strokeId, transform);
+      if (transformTimers.current.has(strokeId)) {
+        return;
+      }
+      const timer = window.setTimeout(() => {
+        transformTimers.current.delete(strokeId);
+        const latest = pendingTransforms.current.get(strokeId);
+        pendingTransforms.current.delete(strokeId);
+        if (latest) {
+          socket.emit("stroke:transform", { boardId, strokeId, transform: latest });
+        }
+      }, LIVE_UPDATE_INTERVAL_MS);
+      transformTimers.current.set(strokeId, timer);
+    },
+    [boardId],
+  );
 
-  // Send item events
-  const sendItemAdd = useCallback((item: any) => {
-    socketRef.current?.emit("item:add", { boardId, item });
-  }, [boardId]);
+  const sendItemAdd = useCallback(
+    (item: ImportedItem) => {
+      socketRef.current?.emit("item:add", { boardId, item });
+    },
+    [boardId],
+  );
 
-  const sendItemUpdate = useCallback((item: any) => {
-    socketRef.current?.emit("item:update", { boardId, item });
-  }, [boardId]);
+  const sendItemUpdate = useCallback(
+    (itemId: string, patch: Partial<ImportedItem>) => {
+      const socket = socketRef.current;
+      if (!socket) {
+        return;
+      }
+      const previous = pendingItems.current.get(itemId);
+      pendingItems.current.set(itemId, { ...previous, ...patch });
+      if (itemTimers.current.has(itemId)) {
+        return;
+      }
+      const timer = window.setTimeout(() => {
+        itemTimers.current.delete(itemId);
+        const latest = pendingItems.current.get(itemId);
+        pendingItems.current.delete(itemId);
+        if (latest) {
+          socket.emit("item:update", { boardId, itemId, patch: latest });
+        }
+      }, LIVE_UPDATE_INTERVAL_MS);
+      itemTimers.current.set(itemId, timer);
+    },
+    [boardId],
+  );
 
-  const sendItemRemove = useCallback((itemId: string) => {
-    socketRef.current?.emit("item:remove", { boardId, itemId });
-  }, [boardId]);
+  const sendItemRemove = useCallback(
+    (itemId: string) => {
+      socketRef.current?.emit("item:remove", { boardId, itemId });
+    },
+    [boardId],
+  );
 
-  // Cursor position (throttled)
-  const sendCursor = useCallback((x: number, y: number, color: string) => {
-    const now = Date.now();
-    const lastSent = cursorThrottleRef.current.get(userId) || 0;
-    if (now - lastSent < 50) return; // 20fps max
-    cursorThrottleRef.current.set(userId, now);
-    socketRef.current?.emit("cursor:move", { boardId, x, y, color });
-  }, [boardId, userId]);
+  const sendItemsReorder = useCallback(
+    (order: string[]) => {
+      socketRef.current?.emit("item:reorder", { boardId, order });
+    },
+    [boardId],
+  );
 
-  // Board actions
+  const sendCursor = useCallback(
+    (x: number, y: number, color: string) => {
+      const socket = socketRef.current;
+      if (!socket) {
+        return;
+      }
+      const now = Date.now();
+      if (now - cursorSentAt.current < CURSOR_INTERVAL_MS) {
+        return;
+      }
+      cursorSentAt.current = now;
+      socket.emit("cursor:move", { boardId, x, y, color });
+    },
+    [boardId],
+  );
+
   const sendClear = useCallback(() => {
     socketRef.current?.emit("board:clear", { boardId });
   }, [boardId]);
 
-  const sendKick = useCallback((targetUserId: string) => {
-    socketRef.current?.emit("user:kick", { boardId, targetUserId });
-  }, [boardId]);
+  const sendKick = useCallback(
+    (targetUserId: string) => {
+      socketRef.current?.emit("user:kick", { boardId, targetUserId });
+    },
+    [boardId],
+  );
 
-  const sendBan = useCallback((targetUserId: string) => {
-    socketRef.current?.emit("user:ban", { boardId, targetUserId });
-  }, [boardId]);
-
-  const sendSettings = useCallback((settings: any) => {
-    socketRef.current?.emit("settings:update", { boardId, settings });
-  }, [boardId]);
+  const sendBan = useCallback(
+    (targetUserId: string) => {
+      socketRef.current?.emit("user:ban", { boardId, targetUserId });
+    },
+    [boardId],
+  );
 
   return {
     connected,
+    users,
+    hostId,
+    isHost,
     sendStroke,
     sendStrokeRemove,
     sendStrokeTransform,
     sendItemAdd,
     sendItemUpdate,
     sendItemRemove,
+    sendItemsReorder,
     sendCursor,
     sendClear,
     sendKick,
     sendBan,
-    sendSettings,
   };
 }

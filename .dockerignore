@@ -56,17 +56,3 @@ scripts/*.txt
 # Docs
 docs/research/**/*
 docs/design-references/**/*
-
-# Uploads
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.svg
-*.webp
-
-# Large files
-*.mp4
-*.mov
-*.avi
-*.mkv

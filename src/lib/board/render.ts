@@ -276,8 +276,6 @@ function drawStroke(
       const vertices = points.map((point) =>
         applyTransform(transform, point.x, point.y),
       );
-      // The polygon closes with a copy of its first point, so use length-2 for the actual last vertex
-      const lastVertex = vertices[vertices.length - 2];
 
       // Compute bounding box of the shape for gradient sizing
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -291,7 +289,6 @@ function drawStroke(
       const bboxHeight = maxY - minY;
       const centerX = (minX + maxX) / 2;
       const centerY = (minY + maxY) / 2;
-      const diagonal = Math.hypot(bboxWidth, bboxHeight) || 1;
 
       const stops = normalizeGradientStops(style.gradientStops, style.color);
 
@@ -323,11 +320,13 @@ function drawStroke(
         const angle = style.gradientAngle ?? 0;
         const rad = (angle * Math.PI) / 180;
 
-        // Use diagonal of bounding box for full coverage at any angle
+        // Use the bounding box's projection onto the angle, so the first and
+        // last stops land exactly on the shape's edges at every angle.
         const cos = Math.cos(rad);
         const sin = Math.sin(rad);
-        const gx = cos * diagonal;
-        const gy = sin * diagonal;
+        const axis = Math.max(1, Math.abs(cos) * bboxWidth + Math.abs(sin) * bboxHeight);
+        const gx = cos * axis;
+        const gy = sin * axis;
 
         gradient = context.createLinearGradient(
           centerX - gx / 2,

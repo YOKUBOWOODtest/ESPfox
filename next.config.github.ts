@@ -11,6 +11,10 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  // The export has no Socket.io server; the board remains a local whiteboard.
+  env: {
+    NEXT_PUBLIC_STATIC_EXPORT: "1",
+  },
 };
 
 export default nextConfig;

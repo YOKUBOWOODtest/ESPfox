@@ -265,6 +265,19 @@ async function main() {
     })()`);
     await sleep(400);
   };
+  /** Aims the linear ramp. 0° is left→right, 90° is top→bottom. */
+  const setGradientAngle = async (degrees) => {
+    await evaluate(`(() => {
+      const input = document.querySelector('[data-testid="gradient-angle"]');
+      if (!input) return 'missing';
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(input, '${degrees}');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return input.value;
+    })()`);
+    await sleep(400);
+  };
   const readStyle = () =>
     evaluate(`(() => {
       const p = document.querySelector('[data-testid="draw-panel"]');
@@ -512,6 +525,8 @@ async function main() {
   check("stop editor opens a colour wheel", wheelCount === 2, `wheels=${wheelCount}`);
   await setHex(0, "FF0000");
   await setHex(1, "0000FF");
+  // The path below is vertical, so aim the ramp down the board.
+  await setGradientAngle(90);
   const gradStyle = await readStyle();
   check(
     "gradient colours committed",
@@ -597,6 +612,7 @@ async function main() {
   await openPanel();
   await pickStyle("Relleno degradado");
   await pickGradientType("linear");
+  await setGradientAngle(90);
   const stopsBefore = await evaluate(
     `document.querySelectorAll('[data-testid="draw-panel"] [data-testid^="gradient-swatch-"]').length`,
   );
@@ -662,6 +678,7 @@ async function main() {
   // =========================================================================
   await openPanel();
   await pickStyle("Relleno degradado");
+  await setGradientAngle(90);
   // Drop the third stop again so the ramp has a single colour change.
   await evaluate(`document.querySelector('[data-testid="gradient-swatch-2"]').click(); 'clicked'`);
   await sleep(500);

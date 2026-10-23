@@ -123,21 +123,45 @@ export interface Stroke {
   points: Point[];
   style: StrokeStyle;
   transform: Transform;
+  /**
+   * The device that drew the stroke.
+   *
+   * Collaboration uses it to keep everybody's ink separate: the eraser only
+   * reaches your own strokes, and undo never rewinds somebody else's work.
+   * Older saved boards have no author and are treated as shared.
+   */
+  authorId?: string;
 }
 
 let nextId = 0;
 
-/** Monotonic ids; strokes never cross a serialisation boundary in this build. */
+/**
+ * A stroke id.
+ *
+ * Two devices drawing at the same time must never mint the same id, so the
+ * browser's UUID generator is preferred. The counter is only a fallback for
+ * environments without `crypto.randomUUID`.
+ */
 export function strokeId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `s-${crypto.randomUUID()}`;
+  }
   nextId += 1;
-  return `s${nextId}`;
+  return `s${Date.now().toString(36)}-${nextId}`;
 }
 
 export function createStroke(
   points: Point[],
   style: StrokeStyle,
+  authorId?: string,
 ): Stroke {
-  return { id: strokeId(), points, style, transform: { ...IDENTITY } };
+  return {
+    id: strokeId(),
+    points,
+    style,
+    transform: { ...IDENTITY },
+    ...(authorId ? { authorId } : {}),
+  };
 }
 
 /* --- Transform maths ------------------------------------------------------ */

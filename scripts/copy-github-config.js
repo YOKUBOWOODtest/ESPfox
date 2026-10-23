@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- this script runs on plain Node, not through the bundler */
 const fs = require('fs');
 fs.copyFileSync('next.config.github.ts', 'next.config.ts');
 console.log('Copied next.config.github.ts to next.config.ts');

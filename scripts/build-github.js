@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- this script runs on plain Node, not through the bundler */
 const fs = require('fs');
 const { execSync } = require('child_process');
 
@@ -15,7 +16,7 @@ console.log('Copied next.config.github.ts to next.config.ts');
 try {
   execSync('npm run build', { stdio: 'inherit', env: process.env });
   console.log('GitHub Pages build completed successfully');
-} catch (error) {
+} catch {
   console.error('GitHub Pages build failed');
   // Restore original config even on failure
   fs.writeFileSync('next.config.ts', originalConfig);

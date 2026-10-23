@@ -1,383 +1,590 @@
 /**
- * Socket.io server for real-time whiteboard collaboration.
- * 
- * Handles:
- * - Stroke syncing (broadcast finished strokes)
- * - Cursor positions (throttled)
- * - User presence (join/leave, user list)
- * - Host permissions (clear board, kick/ban)
- * - Board settings sync
+ * Production server.
+ *
+ * Serves the Next.js app and the Socket.io endpoint from the same port, which
+ * is what Render exposes. Deploying the stock standalone server would serve
+ * the pages but there would be no collaboration backend, so this file is the
+ * entrypoint the Docker image runs.
+ *
+ * Runs directly with `node server/index.ts`: the server only uses erasable
+ * TypeScript syntax, which Node 24 strips natively.
  */
 
-import { Server } from "socket.io";
-import { createServer } from "http";
-import { parse } from "url";
+import { createServer } from "node:http";
+import { parse } from "node:url";
 import next from "next";
+import { Server } from "socket.io";
 
 const dev = process.env.NODE_ENV !== "production";
-const hostname = "0.0.0.0";
-const port = parseInt(process.env.PORT || "3000", 10);
+const hostname = process.env.HOSTNAME ?? "0.0.0.0";
+const port = Number.parseInt(process.env.PORT ?? "3000", 10);
+
+/* --- Board state ---------------------------------------------------------- */
+
+interface StrokeRecord {
+  id: string;
+  authorId?: string;
+  transform?: unknown;
+  [key: string]: unknown;
+}
+
+interface ItemRecord {
+  id: string;
+  authorId?: string;
+  [key: string]: unknown;
+}
+
+interface BoardUser {
+  id: string;
+  name: string;
+  hue: number;
+  isHost: boolean;
+  socketId: string;
+  lastSeen: number;
+}
+
+interface BoardSettings {
+  backgroundColor: string;
+  showGrid: boolean;
+  snapToGrid: boolean;
+  gridSize: number;
+  autoSaveInterval: number;
+}
+
+interface Board {
+  id: string;
+  strokes: Map<string, StrokeRecord>;
+  items: Map<string, ItemRecord>;
+  users: Map<string, BoardUser>;
+  hostId: string | null;
+  bannedIds: Set<string>;
+  settings: BoardSettings;
+}
+
+const boards = new Map<string, Board>();
+
+function createBoard(id: string): Board {
+  return {
+    id,
+    strokes: new Map(),
+    items: new Map(),
+    users: new Map(),
+    hostId: null,
+    bannedIds: new Set(),
+    settings: {
+      backgroundColor: "#ffffff",
+      showGrid: true,
+      snapToGrid: true,
+      gridSize: 20,
+      autoSaveInterval: 30,
+    },
+  };
+}
+
+function boardFor(id: string): Board {
+  let board = boards.get(id);
+  if (!board) {
+    board = createBoard(id);
+    boards.set(id, board);
+  }
+  return board;
+}
+
+function publicUsers(board: Board) {
+  return Array.from(board.users.values()).map((user) => ({
+    id: user.id,
+    name: user.name,
+    hue: user.hue,
+    isHost: user.isHost,
+  }));
+}
+
+/** Every event carries the board id; only strings are trusted. */
+function boardIdOf(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 && value.length <= 128
+    ? value
+    : null;
+}
+
+/** A display name that is safe to put on other people's screens. */
+function safeName(value: unknown, fallback: string): string {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  const trimmed = value.replace(/[\u0000-\u001f]/g, "").trim().slice(0, 40);
+  return trimmed || fallback;
+}
+
+function safeHue(value: unknown): number {
+  const hue = typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return ((Math.round(hue) % 360) + 360) % 360;
+}
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
-  const httpServer = createServer(async (req, res) => {
-    try {
-      const parsedUrl = parse(req.url!, true);
-      await handle(req, res, parsedUrl);
-    } catch (err) {
-      console.error("Error handling request:", err);
-      res.statusCode = 500;
-      res.end("Internal Server Error");
-    }
+  const httpServer = createServer((request, response) => {
+    const parsed = parse(request.url ?? "/", true);
+    handle(request, response, parsed).catch((error: unknown) => {
+      console.error("[server] request failed", error);
+      if (!response.headersSent) {
+        response.statusCode = 500;
+        response.end("Internal Server Error");
+      }
+    });
   });
 
   const io = new Server(httpServer, {
-    cors: {
-      origin: "*",
-      methods: ["GET", "POST"],
-    },
-    // Increase max payload for stroke data
-    maxHttpBufferSize: 1e6,
+    // An imported image travels as a data URL, so the default 1 MB is small.
+    maxHttpBufferSize: 24 * 1024 * 1024,
+    pingInterval: 20_000,
+    pingTimeout: 20_000,
+    cors: { origin: "*", methods: ["GET", "POST"] },
   });
 
-  // Board state in memory (per boardId)
-  interface BoardState {
-    strokes: Map<string, any>; // strokeId -> stroke
-    items: Map<string, any>;
-    users: Map<string, UserInfo>;
-    hostId: string | null;
-    bannedIds: Set<string>;
-    settings: any;
+  function broadcastUsers(board: Board) {
+    io.to(board.id).emit("users:update", publicUsers(board));
   }
 
-  interface UserInfo {
-    id: string;
-    name: string;
-    hue: number;
-    socketId: string;
-    isHost: boolean;
-    cursor?: { x: number; y: number; color: string };
-    lastSeen: number;
-  }
-
-  const boards = new Map<string, BoardState>();
-
-  function getOrCreateBoard(boardId: string): BoardState {
-    let board = boards.get(boardId);
-    if (!board) {
-      board = {
-        strokes: new Map(),
-        items: new Map(),
-        users: new Map(),
-        hostId: null,
-        bannedIds: new Set(),
-        settings: {
-          backgroundColor: "#ffffff",
-          showGrid: true,
-          snapToGrid: true,
-          gridSize: 20,
-          autoSaveInterval: 30,
-        },
-      };
-      boards.set(boardId, board);
+  function setHost(board: Board, hostId: string | null) {
+    board.hostId = hostId;
+    for (const user of board.users.values()) {
+      user.isHost = user.id === hostId;
     }
-    return board;
   }
 
-  function getBoardUsers(board: BoardState) {
-    return Array.from(board.users.values()).map((u) => ({
-      id: u.id,
-      name: u.name,
-      hue: u.hue,
-      isHost: u.isHost,
-    }));
-  }
-
-  function broadcastUsers(boardId: string) {
+  /**
+   * Removes a member.
+   *
+   * The host role stays with the device that opened the board first: a host
+   * who reloads or loses the connection is still the host when it comes back,
+   * and a guest cannot inherit moderation just by being the last one in the
+   * room. If the host never returns, the board simply has no active host.
+   */
+  function removeMember(socketId: string, boardId: string, userId: string) {
     const board = boards.get(boardId);
-    if (!board) return;
-    io.to(boardId).emit("users:update", getBoardUsers(board));
+    if (!board) {
+      return;
+    }
+    const user = board.users.get(userId);
+    if (!user || user.socketId !== socketId) {
+      return;
+    }
+    board.users.delete(userId);
+    broadcastUsers(board);
+    io.to(boardId).emit("user:left", { userId });
   }
 
   io.on("connection", (socket) => {
-    console.log(`Socket connected: ${socket.id}`);
+    let joinedBoardId: string | null = null;
+    let joinedUserId: string | null = null;
 
-    let currentBoardId: string | null = null;
-    let currentUserId: string | null = null;
+    function touch(board: Board) {
+      const user = joinedUserId ? board.users.get(joinedUserId) : null;
+      if (user) {
+        user.lastSeen = Date.now();
+      }
+    }
 
-    // Join a board
-    socket.on("board:join", (data: { boardId: string; userId: string; name: string; hue: number }) => {
-      const { boardId, userId, name, hue } = data;
-      
-      // Check ban
-      const board = getOrCreateBoard(boardId);
-      if (board.bannedIds.has(userId)) {
-        socket.emit("board:banned");
-        socket.disconnect();
+    /** Whether this socket may delete the given record. */
+    function mayDelete(board: Board, authorId: string | undefined): boolean {
+      // Records saved before collaboration have no author and stay shared.
+      if (!authorId) {
+        return true;
+      }
+      return authorId === joinedUserId || board.hostId === joinedUserId;
+    }
+
+    socket.on("board:join", (data: unknown) => {
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const boardId = boardIdOf(payload.boardId);
+      const userId =
+        typeof payload.userId === "string" && payload.userId.length > 0
+          ? payload.userId.slice(0, 80)
+          : null;
+      if (!boardId || !userId) {
         return;
       }
 
-      // Leave previous board if any
-      if (currentBoardId) {
-        socket.leave(currentBoardId);
-        const prevBoard = boards.get(currentBoardId);
-        if (prevBoard && prevBoard.users.has(currentUserId!)) {
-          prevBoard.users.delete(currentUserId!);
-          broadcastUsers(currentBoardId);
-        }
+      if (joinedBoardId && joinedUserId) {
+        removeMember(socket.id, joinedBoardId, joinedUserId);
+        socket.leave(joinedBoardId);
       }
 
-      // Join new board
+      const board = boardFor(boardId);
+
+      if (board.bannedIds.has(userId)) {
+        socket.emit("board:banned");
+        socket.disconnect(true);
+        return;
+      }
+
       socket.join(boardId);
-      currentBoardId = boardId;
-      currentUserId = userId;
+      joinedBoardId = boardId;
+      joinedUserId = userId;
 
-      // Assign host if first user
-      const isHost = board.hostId === null;
-      if (isHost) {
-        board.hostId = userId;
+      const previous = board.users.get(userId);
+      if (previous && previous.socketId !== socket.id) {
+        // The same device opened a second tab: the newest socket wins.
+        previous.socketId = socket.id;
       }
 
-      // Register user
+      if (board.hostId === null) {
+        setHost(board, userId);
+      }
+
+      const isHost = board.hostId === userId;
       board.users.set(userId, {
         id: userId,
-        name,
-        hue,
-        socketId: socket.id,
+        name: safeName(payload.name, "Guest"),
+        hue: safeHue(payload.hue),
         isHost,
+        socketId: socket.id,
         lastSeen: Date.now(),
       });
+      setHost(board, board.hostId ?? userId);
 
-      // Send current board state to the new user
       socket.emit("board:state", {
+        boardId,
         strokes: Array.from(board.strokes.values()),
         items: Array.from(board.items.values()),
-        users: getBoardUsers(board),
+        users: publicUsers(board),
         hostId: board.hostId,
         isHost,
         settings: board.settings,
         myId: userId,
       });
 
-      // Notify others
       socket.to(boardId).emit("user:joined", {
         id: userId,
-        name,
-        hue,
+        name: board.users.get(userId)?.name ?? "Guest",
+        hue: board.users.get(userId)?.hue ?? 0,
         isHost,
       });
-
-      broadcastUsers(boardId);
-      console.log(`User ${name} (${userId}) joined board ${boardId} ${isHost ? "as host" : ""}`);
+      broadcastUsers(board);
     });
 
-    // Cursor position update (throttled client-side)
-    socket.on("cursor:move", (data: { boardId: string; x: number; y: number; color: string }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
-      const user = board.users.get(currentUserId!);
-      if (!user) return;
+    socket.on("board:leave", () => {
+      if (joinedBoardId && joinedUserId) {
+        removeMember(socket.id, joinedBoardId, joinedUserId);
+        socket.leave(joinedBoardId);
+      }
+      joinedBoardId = null;
+      joinedUserId = null;
+    });
 
-      user.cursor = { x: data.x, y: data.y, color: data.color };
-      user.lastSeen = Date.now();
+    socket.on("stroke:add", (data: unknown) => {
+      if (!joinedBoardId || !joinedUserId) {
+        return;
+      }
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const stroke = payload.stroke as StrokeRecord | undefined;
+      if (!stroke || typeof stroke.id !== "string") {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      if (!board) {
+        return;
+      }
+      touch(board);
+      const stored: StrokeRecord = { ...stroke, authorId: joinedUserId };
+      board.strokes.set(stored.id, stored);
+      socket.to(joinedBoardId).emit("stroke:add", stored);
+    });
 
-      // Broadcast to others in the board
-      socket.to(data.boardId).emit("cursor:update", {
-        userId: currentUserId,
-        x: data.x,
-        y: data.y,
-        color: data.color,
-        name: user.name,
+    socket.on("stroke:remove", (data: unknown) => {
+      if (!joinedBoardId || !joinedUserId) {
+        return;
+      }
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const ids = Array.isArray(payload.strokeIds)
+        ? payload.strokeIds.filter((id): id is string => typeof id === "string")
+        : [];
+      const board = boards.get(joinedBoardId);
+      if (!board) {
+        return;
+      }
+      touch(board);
+      const removed: string[] = [];
+      for (const id of ids) {
+        const stroke = board.strokes.get(id);
+        if (stroke && mayDelete(board, stroke.authorId)) {
+          board.strokes.delete(id);
+          removed.push(id);
+        }
+      }
+      if (removed.length > 0) {
+        socket.to(joinedBoardId).emit("stroke:remove", removed);
+      }
+    });
+
+    socket.on("stroke:transform", (data: unknown) => {
+      if (!joinedBoardId) {
+        return;
+      }
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const strokeId = payload.strokeId;
+      if (typeof strokeId !== "string") {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      const stroke = board?.strokes.get(strokeId);
+      if (!board || !stroke) {
+        return;
+      }
+      touch(board);
+      stroke.transform = payload.transform;
+      socket.to(joinedBoardId).emit("stroke:transform", {
+        strokeId,
+        transform: payload.transform,
       });
     });
 
-    // New finished stroke
-    socket.on("stroke:add", (data: { boardId: string; stroke: any }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
-
-      // Only accept strokes from the user who owns the socket
-      const stroke = { ...data.stroke, authorId: currentUserId };
-      board.strokes.set(stroke.id, stroke);
-
-      // Broadcast to all OTHER users
-      socket.to(data.boardId).emit("stroke:add", stroke);
-    });
-
-    // Stroke removed (erase)
-    socket.on("stroke:remove", (data: { boardId: string; strokeIds: string[] }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
-
-      for (const id of data.strokeIds) {
-        board.strokes.delete(id);
+    socket.on("item:add", (data: unknown) => {
+      if (!joinedBoardId || !joinedUserId) {
+        return;
       }
-
-      socket.to(data.boardId).emit("stroke:remove", data.strokeIds);
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const item = payload.item as ItemRecord | undefined;
+      if (!item || typeof item.id !== "string") {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      if (!board) {
+        return;
+      }
+      touch(board);
+      const stored: ItemRecord = { ...item, authorId: joinedUserId };
+      board.items.set(stored.id, stored);
+      socket.to(joinedBoardId).emit("item:add", stored);
     });
 
-    // Stroke transform (move/scale/rotate selection)
-    socket.on("stroke:transform", (data: { boardId: string; strokeId: string; transform: any }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
+    socket.on("item:update", (data: unknown) => {
+      if (!joinedBoardId) {
+        return;
+      }
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const itemId = payload.itemId;
+      const patch = payload.patch;
+      if (typeof itemId !== "string" || typeof patch !== "object" || patch === null) {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      const existing = board?.items.get(itemId);
+      if (!board || !existing) {
+        return;
+      }
+      touch(board);
+      // A patch carries only what changed, so the media data URL is not sent
+      // again on every pointer move.
+      const stored: ItemRecord = {
+        ...existing,
+        ...(patch as ItemRecord),
+        id: itemId,
+        authorId: existing.authorId ?? joinedUserId ?? undefined,
+      };
+      board.items.set(itemId, stored);
+      socket.to(joinedBoardId).emit("item:update", stored);
+    });
 
-      const stroke = board.strokes.get(data.strokeId);
-      if (stroke) {
-        stroke.transform = data.transform;
-        socket.to(data.boardId).emit("stroke:transform", {
-          strokeId: data.strokeId,
-          transform: data.transform,
+    socket.on("item:remove", (data: unknown) => {
+      if (!joinedBoardId) {
+        return;
+      }
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const itemId = payload.itemId;
+      if (typeof itemId !== "string") {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      const item = board?.items.get(itemId);
+      if (!board || !item || !mayDelete(board, item.authorId)) {
+        return;
+      }
+      touch(board);
+      board.items.delete(itemId);
+      socket.to(joinedBoardId).emit("item:remove", itemId);
+    });
+
+    /**
+     * The host uploads the board it already has.
+     *
+     * A board opened before this server existed lives in the host's browser.
+     * On the first join the server has nothing, so the host seeds it and
+     * everybody else receives exactly the board the host sees.
+     */
+    socket.on("board:seed", (data: unknown) => {
+      if (!joinedBoardId || !joinedUserId) {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      if (!board || board.hostId !== joinedUserId) {
+        return;
+      }
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const strokes = Array.isArray(payload.strokes)
+        ? (payload.strokes as StrokeRecord[])
+        : [];
+      const items = Array.isArray(payload.items) ? (payload.items as ItemRecord[]) : [];
+      let added = false;
+      for (const stroke of strokes) {
+        if (stroke && typeof stroke.id === "string" && !board.strokes.has(stroke.id)) {
+          board.strokes.set(stroke.id, {
+            ...stroke,
+            authorId: stroke.authorId ?? joinedUserId,
+          });
+          added = true;
+        }
+      }
+      for (const item of items) {
+        if (item && typeof item.id === "string" && !board.items.has(item.id)) {
+          board.items.set(item.id, {
+            ...item,
+            authorId: item.authorId ?? joinedUserId,
+          });
+          added = true;
+        }
+      }
+      if (added) {
+        socket.to(joinedBoardId).emit("board:seeded", {
+          strokes: Array.from(board.strokes.values()),
+          items: Array.from(board.items.values()),
         });
       }
     });
 
-    // Imported item added
-    socket.on("item:add", (data: { boardId: string; item: any }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
-      board.items.set(data.item.id, data.item);
-      socket.to(data.boardId).emit("item:add", data.item);
-    });
-
-    // Imported item updated (move/scale/rotate)
-    socket.on("item:update", (data: { boardId: string; item: any }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
-      board.items.set(data.item.id, data.item);
-      socket.to(data.boardId).emit("item:update", data.item);
-    });
-
-    // Imported item removed
-    socket.on("item:remove", (data: { boardId: string; itemId: string }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
-      board.items.delete(data.itemId);
-      socket.to(data.boardId).emit("item:remove", data.itemId);
-    });
-
-    // Clear board (host only)
-    socket.on("board:clear", (data: { boardId: string }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
-
-      // Only host can clear
-      if (board.hostId !== currentUserId) {
-        socket.emit("error", { message: "Only the host can clear the board" });
+    socket.on("item:reorder", (data: unknown) => {
+      if (!joinedBoardId) {
         return;
       }
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const order = Array.isArray(payload.order)
+        ? payload.order.filter((id): id is string => typeof id === "string")
+        : [];
+      if (order.length === 0) {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      if (!board) {
+        return;
+      }
+      touch(board);
+      socket.to(joinedBoardId).emit("item:reorder", { order });
+    });
 
+    socket.on("board:clear", () => {
+      if (!joinedBoardId || !joinedUserId) {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      if (!board || board.hostId !== joinedUserId) {
+        socket.emit("error", { message: "Only the board host can clear the board." });
+        return;
+      }
       board.strokes.clear();
       board.items.clear();
-      io.to(data.boardId).emit("board:cleared");
+      io.to(joinedBoardId).emit("board:cleared");
     });
 
-    // Kick user (host only)
-    socket.on("user:kick", (data: { boardId: string; targetUserId: string }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
-
-      if (board.hostId !== currentUserId) {
-        socket.emit("error", { message: "Only the host can kick users" });
+    socket.on("user:kick", (data: unknown) => {
+      const payload = (data ?? {}) as Record<string, unknown>;
+      if (!joinedBoardId || !joinedUserId) {
         return;
       }
-
-      const targetSocket = board.users.get(data.targetUserId)?.socketId;
-      if (targetSocket) {
-        io.to(targetSocket).emit("board:kicked");
-        // They'll reconnect and rejoin if they want
-      }
-      board.users.delete(data.targetUserId);
-      broadcastUsers(data.boardId);
-      io.to(data.boardId).emit("user:left", { userId: data.targetUserId });
-    });
-
-    // Ban user (host only)
-    socket.on("user:ban", (data: { boardId: string; targetUserId: string }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
-
-      if (board.hostId !== currentUserId) {
-        socket.emit("error", { message: "Only the host can ban users" });
+      const board = boards.get(joinedBoardId);
+      const targetId = payload.targetUserId;
+      if (!board || board.hostId !== joinedUserId || typeof targetId !== "string") {
         return;
       }
-
-      board.bannedIds.add(data.targetUserId);
-      board.users.delete(data.targetUserId);
-      
-      const targetSocket = board.users.get(data.targetUserId)?.socketId;
-      if (targetSocket) {
-        io.to(targetSocket).emit("board:banned");
-      }
-      
-      broadcastUsers(data.boardId);
-      io.to(data.boardId).emit("user:left", { userId: data.targetUserId });
-    });
-
-    // Settings update (host only)
-    socket.on("settings:update", (data: { boardId: string; settings: any }) => {
-      const board = boards.get(data.boardId);
-      if (!board) return;
-
-      if (board.hostId !== currentUserId) {
-        socket.emit("error", { message: "Only the host can change settings" });
+      if (targetId === joinedUserId) {
         return;
       }
-
-      board.settings = { ...board.settings, ...data.settings };
-      io.to(data.boardId).emit("settings:update", board.settings);
+      const target = board.users.get(targetId);
+      if (target) {
+        io.to(target.socketId).emit("board:kicked");
+        const targetSocket = io.sockets.sockets.get(target.socketId);
+        targetSocket?.leave(joinedBoardId);
+        board.users.delete(targetId);
+        broadcastUsers(board);
+        io.to(joinedBoardId).emit("user:left", { userId: targetId });
+      }
     });
 
-    // Disconnect
+    socket.on("user:ban", (data: unknown) => {
+      const payload = (data ?? {}) as Record<string, unknown>;
+      if (!joinedBoardId || !joinedUserId) {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      const targetId = payload.targetUserId;
+      if (!board || board.hostId !== joinedUserId || typeof targetId !== "string") {
+        return;
+      }
+      if (targetId === joinedUserId) {
+        return;
+      }
+      board.bannedIds.add(targetId);
+      const target = board.users.get(targetId);
+      if (target) {
+        io.to(target.socketId).emit("board:banned");
+        const targetSocket = io.sockets.sockets.get(target.socketId);
+        targetSocket?.leave(joinedBoardId);
+        board.users.delete(targetId);
+      }
+      broadcastUsers(board);
+      io.to(joinedBoardId).emit("user:left", { userId: targetId });
+    });
+
+    socket.on("settings:update", (data: unknown) => {
+      if (!joinedBoardId || !joinedUserId) {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      if (!board || board.hostId !== joinedUserId) {
+        return;
+      }
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const settings = payload.settings;
+      if (typeof settings === "object" && settings !== null) {
+        board.settings = { ...board.settings, ...(settings as Partial<BoardSettings>) };
+        socket.to(joinedBoardId).emit("settings:update", board.settings);
+      }
+    });
+
+    socket.on("cursor:move", (data: unknown) => {
+      if (!joinedBoardId || !joinedUserId) {
+        return;
+      }
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const x = payload.x;
+      const y = payload.y;
+      if (typeof x !== "number" || typeof y !== "number") {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      const user = board?.users.get(joinedUserId);
+      if (!board || !user) {
+        return;
+      }
+      user.lastSeen = Date.now();
+      socket.to(joinedBoardId).emit("cursor:update", {
+        userId: joinedUserId,
+        x,
+        y,
+        color: typeof payload.color === "string" ? payload.color : "#e0533f",
+        name: user.name,
+      });
+    });
+
     socket.on("disconnect", () => {
-      console.log(`Socket disconnected: ${socket.id}`);
-      if (currentBoardId && currentUserId) {
-        const board = boards.get(currentBoardId);
-        if (board) {
-          const wasHost = board.hostId === currentUserId;
-          board.users.delete(currentUserId);
-
-          // Transfer host if needed
-          if (wasHost) {
-            const firstUser = board.users.values().next().value;
-            if (firstUser) {
-              board.hostId = firstUser.id;
-              firstUser.isHost = true;
-              io.to(currentBoardId).emit("host:changed", { newHostId: firstUser.id });
-            } else {
-              board.hostId = null;
-            }
-          }
-
-          broadcastUsers(currentBoardId);
-          socket.to(currentBoardId).emit("user:left", { userId: currentUserId });
-        }
+      if (joinedBoardId && joinedUserId) {
+        removeMember(socket.id, joinedBoardId, joinedUserId);
       }
     });
   });
 
-  // Cleanup stale boards periodically
-  setInterval(() => {
-    const now = Date.now();
-    for (const [boardId, board] of boards.entries()) {
-      // Remove boards with no users for > 1 hour
-      if (board.users.size === 0) {
-        // Could add lastActivity timestamp to track this
-        // For now, keep boards alive
-      }
-      // Remove stale users (> 5 min no cursor/activity)
-      for (const [userId, user] of board.users.entries()) {
-        if (now - user.lastSeen > 5 * 60 * 1000) {
-          board.users.delete(userId);
-          broadcastUsers(boardId);
-          io.to(boardId).emit("user:left", { userId });
-        }
-      }
-    }
-  }, 60000);
-
-  httpServer.listen(port, () => {
-    console.log(`> Ready on http://${hostname}:${port}`);
+  httpServer.listen(port, hostname, () => {
+    console.log(`> whiteboardmod ready on http://${hostname}:${port} (${dev ? "dev" : "production"})`);
   });
 });

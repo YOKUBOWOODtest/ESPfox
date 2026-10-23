@@ -1,47 +1,30 @@
-# Dockerfile for Render deployment
-# Uses standalone output for minimal production image
+# Production image for Render.
+#
+# Next.js is served by `server/index.ts`, which also carries the Socket.io
+# endpoint. A custom server and `output: "standalone"` are mutually exclusive
+# (Next's docs are explicit about that), so the image keeps the full build and
+# the runtime dependencies instead of the traced standalone folder.
 
-FROM node:24-alpine AS base
+FROM node:24-alpine
 
-# Install dependencies only when needed
-FROM base AS deps
 RUN apk add --no-cache libc6-compat
+
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm ci
-
-# Rebuild the source code only when needed
-FROM base AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-
-# Generate standalone build
-RUN npm run build
-
-# Production image, copy all the files and run next
-FROM base AS runner
-WORKDIR /app
-
-ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+# Dependencies first, so a source edit does not reinstall them.
+COPY package.json package-lock.json ./
+RUN npm ci
 
-COPY --from=builder /app/public ./public
+COPY . .
+RUN npm run build
 
-# Automatically leverage output traces to reduce image size
-# https://nextjs.org/docs/advanced-features/output-file-tracing
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
 
 EXPOSE 3000
 
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-CMD ["node", "server.js"]
+# Node 24 runs the TypeScript server directly; it only uses erasable syntax.
+CMD ["node", "server/index.ts"]

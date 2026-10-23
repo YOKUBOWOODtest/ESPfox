@@ -28,8 +28,9 @@
   },
   "scripts": {
     "dev": "next dev",
+    "dev:collab": "node server/index.ts",
     "build": "next build",
-    "start": "next start",
+    "start": "node server/index.ts",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "check": "npm run lint && npm run typecheck && npm run build",

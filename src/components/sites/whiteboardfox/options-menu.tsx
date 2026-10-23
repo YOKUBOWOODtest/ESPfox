@@ -33,6 +33,9 @@ export interface OptionsMenuProps {
   onFlipColorsChange: (value: boolean) => void;
   /** Whether this device is the board's host. */
   isHost: boolean;
+  /** Host-only moderation from the participants list. */
+  onKick?: (participant: Participant) => void;
+  onBan?: (participant: Participant) => void;
 }
 
 export function OptionsMenu({
@@ -45,6 +48,8 @@ export function OptionsMenu({
   flipColors,
   onFlipColorsChange,
   isHost,
+  onKick,
+  onBan,
 }: OptionsMenuProps) {
   const [activeTab, setActiveTab] = useState<"colours" | "participants" | "settings">("colours");
 
@@ -158,6 +163,8 @@ export function OptionsMenu({
               onSearchChange={onSearchChange}
               onClose={() => {}}
               embedded={true}
+              onKick={onKick}
+              onBan={onBan}
             />
           </div>
         )}

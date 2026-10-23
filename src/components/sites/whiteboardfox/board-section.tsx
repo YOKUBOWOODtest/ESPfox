@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   CogIcon,
   EraserIcon,
@@ -17,7 +17,7 @@ import { OptionsMenu } from "./options-menu";
 import { MobileToolbar } from "./mobile-toolbar";
 import { RoomBar } from "./room-bar";
 import { RoomChatBar, RoomMessages, RoomReactions } from "./room-chat";
-import { markJoined, useBoard } from "./use-board";
+import { avatarHue, markJoined, useBoard, type Participant } from "./use-board";
 import { claimBoardHost, useBoardHost } from "./use-board-host";
 import { useBoardDoc } from "./use-board-doc";
 import {
@@ -32,7 +32,7 @@ import { usePro } from "./use-pro";
 import { useRoom } from "./use-room";
 import { useRoomMic } from "./use-room-mic";
 import { useIsMobile, useTouchGestures, multiTouchActiveRef } from "./use-mobile";
-import { useBoardSync } from "./use-board-sync";
+import { useBoardSync, type BoardSync } from "./use-board-sync";
 import { WHITEBOARDMOD_ORIGIN } from "./site-header";
 import {
   clampScale,
@@ -150,6 +150,22 @@ const ERASE_BRUSH_RADIUS = 12;
 /** Extra slack, in world units, when grabbing a selected stroke to move it. */
 const MOVE_TOLERANCE = 6;
 
+/**
+ * The origin this board is served from.
+ *
+ * The share link has to point at the deployment the visitor is actually on:
+ * localhost while developing, the Render host in production, the static host
+ * for the exported demo. The server snapshot keeps the branded fallback so
+ * hydration has something stable to render.
+ */
+function useBoardOrigin(): string {
+  return useSyncExternalStore(
+    () => () => {},
+    () => window.location.origin,
+    () => WHITEBOARDMOD_ORIGIN,
+  );
+}
+
 export function BoardSection({ boardId }: { boardId: string }) {
   const user = useDeviceUser();
   const pro = usePro();
@@ -159,18 +175,34 @@ export function BoardSection({ boardId }: { boardId: string }) {
    * The board's host.
    *
    * The device that opened the board first owns it — in practice the one that
-   * created it — and everybody else is a user. The host keeps the board's
-   * destructive tools: clearing it and changing its background colour.
+   * created it — and everybody else is a user. The collaboration server is the
+   * authority once connected; the localStorage claim is only an offline
+   * fallback for a board nobody else has opened.
    */
-  const { hostId, isHost } = useBoardHost(effectiveId, user.id);
-  const board = useBoard(effectiveId, user, pro, hostId);
+  const localHost = useBoardHost(effectiveId, user.id);
+  /**
+   * The local document has finished restoring.
+   *
+   * The socket waits for this: an empty server has to be seeded with the board
+   * this browser already has, and seeding before the restore would send an
+   * empty board and lose it.
+   */
+  const [docReady, setDocReady] = useState(false);
+  const syncRef = useRef<BoardSync | null>(null);
+  /** The host flag the document reads while deciding what may be erased. */
+  const hostModeRef = useRef(false);
+
   const doc = useBoardDoc({
-    onStrokeCommit: (stroke) => sync.sendStroke(stroke),
-    onStrokesRemove: (strokeIds) => sync.sendStrokeRemove(strokeIds),
-    onStrokeTransform: (strokeId, transform) => sync.sendStrokeTransform(strokeId, transform),
-    onItemsChange: (items) => {
-      // Items are synced via individual operations, but we could do a full sync here if needed
-    },
+    selfId: user.id,
+    isHost: () => hostModeRef.current,
+    onStrokeCommit: (stroke) => syncRef.current?.sendStroke(stroke),
+    onStrokesRemove: (strokeIds) => syncRef.current?.sendStrokeRemove(strokeIds),
+    onStrokeTransform: (strokeId, transform) =>
+      syncRef.current?.sendStrokeTransform(strokeId, transform),
+    onItemAdd: (item) => syncRef.current?.sendItemAdd(item),
+    onItemUpdate: (itemId, patch) => syncRef.current?.sendItemUpdate(itemId, patch),
+    onItemRemove: (itemId) => syncRef.current?.sendItemRemove(itemId),
+    onItemsReorder: (orderedIds) => syncRef.current?.sendItemsReorder(orderedIds),
   });
   /** The board's own settings: background, grid, snapping and auto-save. */
   const settings = useBoardSettings(effectiveId);
@@ -192,58 +224,128 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const room = useRoom(effectiveId, displayName(user), user.id, chatOpen);
   const mic = useRoomMic();
 
-  /** Real-time collaboration sync with other users. */
+  /**
+   * Live collaboration.
+   *
+   * The server is the authority on who is in the room and who owns the board.
+   * The socket stays open for as long as the board does; reconnects rejoin and
+   * receive the current state.
+   */
   const sync = useBoardSync({
     boardId: effectiveId,
     userId: user.id,
     userName: displayName(user),
-    userHue: board.participants[0]?.avatarHue ?? 0,
-    onStrokesChange: (strokes) => {
-      doc.strokes.current = strokes;
-      doc.bump();
+    userHue: avatarHue(user.id),
+    enabled:
+      process.env.NEXT_PUBLIC_STATIC_EXPORT !== "1" &&
+      ready &&
+      docReady &&
+      Boolean(effectiveId && user.id),
+    getLocalDocument: () => ({
+      strokes: doc.strokes.current,
+      items: doc.items.current,
+    }),
+    onServerState: (state) => {
+      doc.importDocument({ strokes: state.strokes, items: state.items });
     },
-    onItemsChange: (items) => {
-      doc.items.current = items;
-      doc.bump();
+    onStrokeAdd: (stroke) => {
+      doc.addRemoteStroke(stroke);
     },
-    onUsersChange: (users) => {
-      // The board's participant list is separate, but we could merge if needed
-      // For now, the board uses its own participant system
+    onStrokesRemove: (strokeIds) => {
+      doc.removeRemoteStrokes(strokeIds);
     },
-    onHostChange: (isHost, hostId) => {
-      // Host status is managed by useBoardHost
+    onStrokeTransform: (strokeId, transform) => {
+      doc.transformRemoteStroke(strokeId, transform);
     },
-    onSettingsChange: (settings) => {
-      writeSettings(effectiveId, settings);
+    onItemAdd: (item) => {
+      doc.addRemoteItem(item);
+    },
+    onItemUpdate: (item) => {
+      doc.updateRemoteItem(item);
+    },
+    onItemRemove: (itemId) => {
+      doc.removeRemoteItem(itemId);
+    },
+    onItemsReorder: (orderedIds) => {
+      doc.applyItemOrder(orderedIds);
+    },
+    onBoardCleared: () => {
+      doc.importDocument({ strokes: [], items: [] });
     },
     onCursorUpdate: (userId, x, y, color, name) => {
-      // Store remote cursor for rendering
-      remoteCursors.current.set(userId, { x, y, color, name, lastUpdate: Date.now() });
-      schedulePaint();
+      remoteCursors.current.set(userId, {
+        x,
+        y,
+        color,
+        name,
+        lastUpdate: Date.now(),
+      });
     },
     onCursorRemove: (userId) => {
       remoteCursors.current.delete(userId);
-      schedulePaint();
-    },
-    onMessage: (message) => {
-      // Handled by useRoom
-    },
-    onReaction: (reaction) => {
-      // Handled by useRoom
     },
     onKicked: () => {
-      window.location.href = `/lobby?from=board&kicked=1`;
+      window.location.href = "/lobby?from=board&kicked=1";
     },
     onBanned: () => {
-      window.location.href = `/lobby?from=board&banned=1`;
+      window.location.href = "/lobby?from=board&banned=1";
     },
     onError: (message) => {
-      console.error("[Sync] Error:", message);
+      console.error("[sync]", message);
     },
   });
+  const effectiveHostId = sync.connected ? sync.hostId : localHost.hostId;
+  const isHost = sync.connected ? sync.isHost : localHost.isHost;
+
+  /**
+   * Publish the live objects the event handlers need.
+   *
+   * The document callbacks are created before the socket exists and the host
+   * flag depends on the socket, so both are mirrored after the commit.
+   */
+  useEffect(() => {
+    syncRef.current = sync;
+    hostModeRef.current = isHost;
+  }, [sync, isHost]);
+
+  const board = useBoard(effectiveId, user, pro, effectiveHostId);
+
+  /**
+   * The users panel: this device plus everybody the server reports.
+   *
+   * The board's own store only knows the visitor; the collaboration server
+   * knows the whole room. Merging the two makes every device that opens the
+   * link appear in the list, with the host marked wherever they are.
+   */
+  const participants = useMemo<Participant[]>(() => {
+    const selfServer = sync.users.find((entry) => entry.id === user.id);
+    const selfBase = board.participants[0];
+    const self: Participant = {
+      ...selfBase,
+      role: sync.connected ? (selfServer?.isHost ? "host" : "user") : selfBase.role,
+      canBlock: false,
+    };
+    const remotes: Participant[] = sync.users
+      .filter((entry) => entry.id !== user.id)
+      .map((entry) => ({
+        key: entry.id,
+        nickname: entry.name,
+        deviceId: entry.id,
+        status: "online",
+        self: false,
+        avatarHue: entry.hue,
+        canBlock: isHost,
+        role: entry.isHost ? "host" : "user",
+      }));
+    return [self, ...remotes];
+  }, [board.participants, isHost, sync.connected, sync.users, user.id]);
 
   /** Detecta si estamos en móvil para cambiar la UI. */
   const isMobile = useIsMobile();
+  /** The deployment the visitor is on, for the share links. */
+  const boardOrigin = useBoardOrigin();
+  /** Remote cursors use the user's avatar hue, not their ink colour. */
+  const cursorColor = `hsl(${avatarHue(user.id)}, 72%, 45%)`;
 
   const [tool, setTool] = useState<Tool>("draw");
   const [style, setStyle] = useState<StrokeStyle>(DEFAULT_STYLE);
@@ -416,19 +518,30 @@ export function BoardSection({ boardId }: { boardId: string }) {
    * Restores the board's saved document.
    *
    * The restore is deferred by a tick: the board is still mounting, and the
-   * document should not be swapped under it in the same breath.
+   * document should not be swapped under it in the same breath. The socket is
+   * only allowed to connect afterwards, so seeding an empty server sends the
+   * restored document rather than an empty one.
    */
   const importDocument = doc.importDocument;
   useEffect(() => {
     if (!ready || !effectiveId) {
       return;
     }
+    let cancelled = false;
     const saved = readBoardDocument(effectiveId);
-    if (!saved) {
-      return;
-    }
-    const timer = window.setTimeout(() => importDocument(saved), 0);
-    return () => window.clearTimeout(timer);
+    const timer = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+      if (saved) {
+        importDocument(saved);
+      }
+      setDocReady(true);
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [ready, effectiveId, importDocument]);
 
   /**
@@ -1093,7 +1206,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
       active.lastX = screen.x;
       active.lastY = screen.y;
       // Send cursor position for remote users
-      sync.sendCursor(world.x, world.y, style.color);
+      sync.sendCursor(world.x, world.y, cursorColor);
       schedulePaint();
       return;
     }
@@ -1105,7 +1218,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
         radius: ERASE_BRUSH_RADIUS * camera.current.scale,
       };
       // Send cursor position for remote users
-      sync.sendCursor(world.x, world.y, style.color);
+      sync.sendCursor(world.x, world.y, cursorColor);
       const removed = doc.eraseAt(world.x, world.y, ERASE_TOLERANCE);
       if (removed > 0) {
         schedulePaint();
@@ -1145,7 +1258,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
         const newX = item.x + dx;
         const newY = item.y + dy;
         doc.updateItem(item.id, { x: newX, y: newY }, true);
-        sync.sendItemUpdate({ ...item, x: newX, y: newY });
         schedulePaint();
       }
       return;
@@ -1163,8 +1275,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
         { rotation: newRotation },
         true,
       );
-      const item = docItems.current.find((i) => i.id === active.itemId);
-      if (item) sync.sendItemUpdate({ ...item, rotation: newRotation });
       schedulePaint();
       return;
     }
@@ -1180,8 +1290,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
         Math.hypot(world.x - active.center.x, world.y - active.center.y) || 1;
       const scale = Math.max(0.05, active.startScale * (distance / active.startDistance));
       doc.updateItem(active.itemId, { scale }, true);
-      const item = docItems.current.find((i) => i.id === active.itemId);
-      if (item) sync.sendItemUpdate({ ...item, scale });
       schedulePaint();
       return;
     }
@@ -1254,7 +1362,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
     };
     drafting.current = [...(drafting.current ?? []), next];
     // Send cursor position for remote users to see
-    sync.sendCursor(world.x, world.y, style.color);
+    sync.sendCursor(world.x, world.y, cursorColor);
     schedulePaint();
   };
 
@@ -1382,6 +1490,26 @@ export function BoardSection({ boardId }: { boardId: string }) {
   };
 
   /**
+   * Host-only moderation.
+   *
+   * Kicking closes the other device's session; banning also refuses the board
+   * to that device if it tries to come back.
+   */
+  const kickParticipant = (participant: Participant) => {
+    if (!isHost || participant.self) {
+      return;
+    }
+    sync.sendKick(participant.deviceId);
+  };
+
+  const banParticipant = (participant: Participant) => {
+    if (!isHost || participant.self) {
+      return;
+    }
+    sync.sendBan(participant.deviceId);
+  };
+
+  /**
    * Clears the board.
    *
    * Only the host may do this: it throws away everything that is on the
@@ -1392,6 +1520,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
       return;
     }
     doc.clearAll();
+    sync.sendClear();
   };
 
   /**
@@ -1406,12 +1535,11 @@ export function BoardSection({ boardId }: { boardId: string }) {
       viewport.current.width / 2,
       viewport.current.height / 2,
     );
-    const item = createImportedItem(media, centre.x, centre.y);
+    const item = createImportedItem(media, centre.x, centre.y, user.id);
     doc.beginEdit();
     doc.addItem(item);
     doc.endEdit();
     doc.selectItem(item.id);
-    sync.sendItemAdd(item);
     schedulePaint();
   };
 
@@ -1563,7 +1691,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
         {/* --- The room: here.fm's half of the mix, under the board's tools --- */}
         <RoomBar
-          roomUrl={`${WHITEBOARDMOD_ORIGIN}/board/${effectiveId}`}
+          roomUrl={`${boardOrigin}/board/${effectiveId}`}
           room={room}
           mic={mic}
           chatOpen={chatOpen}
@@ -1590,7 +1718,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
           optionsOpen={optionsOpen}
           drawPanelOpen={drawPanelOpen}
           setDrawPanelOpen={setDrawPanelOpen}
-          participants={board.participants}
+          participants={participants}
           search={search}
           onSearchChange={setSearch}
           settings={settings}
@@ -1602,6 +1730,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
           }}
           flipColors={flipColors}
           onFlipColorsChange={setFlipColors}
+          onKick={kickParticipant}
+          onBan={banParticipant}
         />
       )}
 
@@ -1668,7 +1798,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
       {!isMobile && optionsOpen && (
         <OptionsMenu
-          participants={board.participants}
+          participants={participants}
           search={search}
           onSearchChange={setSearch}
           onClose={() => setOptionsOpen(false)}
@@ -1684,6 +1814,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
           flipColors={flipColors}
           onFlipColorsChange={setFlipColors}
           isHost={isHost}
+          onKick={kickParticipant}
+          onBan={banParticipant}
         />
       )}
 
@@ -1707,12 +1839,12 @@ export function BoardSection({ boardId }: { boardId: string }) {
           className="text-[13px] underline"
           style={{ color: "#0066cc", cursor: "pointer", background: "none", border: 0, padding: 0 }}
           onClick={() => {
-            const url = `${WHITEBOARDMOD_ORIGIN}/board/${board.id}`;
+            const url = `${boardOrigin}/board/${board.id}`;
             navigator.clipboard?.writeText(url).catch(() => undefined);
           }}
           data-testid="board-share-path"
         >
-          {`${WHITEBOARDMOD_ORIGIN}/board/${board.id}`}
+          {`${boardOrigin}/board/${board.id}`}
         </button>
         <button
           type="button"
