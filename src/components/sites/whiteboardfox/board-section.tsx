@@ -1656,8 +1656,16 @@ export function BoardSection({ boardId }: { boardId: string }) {
           className={`menu-button ${tool === "draw" ? "gwt-ToggleButton-down" : ""}`}
           title="Draw (press again to show options) (Key D)"
           aria-pressed={tool === "draw"}
-          onClick={handleDrawClick}
-          onDoubleClick={() => {
+          onClick={(e) => {
+            // Ignore synthetic double-click opens from stylus
+            if (e.detail > 1) return;
+            handleDrawClick();
+          }}
+          onDoubleClick={(e: any) => {
+            if (e.pointerType === "pen") {
+              e.preventDefault();
+              return;
+            }
             setTool("draw");
             setDrawPanelOpen(true);
           }}
@@ -1814,6 +1822,10 @@ export function BoardSection({ boardId }: { boardId: string }) {
           onPointerCancel={(e) => finish(e)}
           onWheel={handleWheel}
           onDoubleClick={(event) => {
+            if ((event as any).pointerType === "pen") {
+              event.preventDefault();
+              return;
+            }
             // On the canvas, a double click acts as a shortcut for the pencil.
             if (tool === "draw") {
               setDrawPanelOpen(true);
