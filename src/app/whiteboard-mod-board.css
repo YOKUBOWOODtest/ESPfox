@@ -1790,18 +1790,67 @@ button.whoDrewBtn:hover {
 /* Tablet landscape - híbrido */
 @media (min-width: 768px) and (max-width: 1023px) and (pointer: coarse) {
   #menuStrip {
-    width: 100px;
-    flex: 0 0 100px;
+    width: 90px;
+    flex: 0 0 90px;
   }
 
   .menu-button {
-    width: 100px;
-    height: 60px;
-    font-size: 11px;
+    width: 90px;
+    height: 58px;
+    font-size: 10px;
   }
 
   .menu-button .html-face {
     gap: 2px;
+  }
+
+  .roomBar {
+    padding: 8px 2px 10px;
+    gap: 6px;
+  }
+
+  .roomAvatar {
+    width: 26px;
+    height: 26px;
+  }
+
+  .roomChatBar {
+    height: 48px;
+    padding: 0 10px;
+  }
+
+  #drawPanel {
+    left: 110px;
+  }
+
+  [data-testid="board-badge"] {
+    left: 100px !important;
+  }
+}
+
+/* Tablet portrait - hybrid */
+@media (min-width: 768px) and (max-width: 1023px) and (orientation: portrait) and (pointer: coarse) {
+  #menuStrip {
+    width: 80px;
+    flex: 0 0 80px;
+  }
+
+  .menu-button {
+    width: 80px;
+    height: 54px;
+    font-size: 9px;
+  }
+
+  .roomBar {
+    padding: 6px 2px 8px;
+  }
+
+  #drawPanel {
+    left: 90px;
+  }
+
+  [data-testid="board-badge"] {
+    left: 90px !important;
   }
 }
 

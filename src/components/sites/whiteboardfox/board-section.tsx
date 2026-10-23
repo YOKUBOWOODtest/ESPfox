@@ -700,8 +700,19 @@ export function BoardSection({ boardId }: { boardId: string }) {
     };
   }, [canvasEl]);
 
-  /** Touch gestures: pinch-to-zoom y two-finger pan (solo en móvil). */
-  useTouchGestures(canvasRef, camera, viewport, schedulePaint, isMobile);
+  /** Touch gestures: pinch-to-zoom y two-finger pan (móviles y tablets). */
+  const isTabletTouch = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    return (
+      (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0) &&
+      window.innerWidth >= 768 &&
+      window.innerWidth < 1024
+    );
+  }, []);
+  const handleTouchScale = useCallback((scale: number) => {
+    setZoomLabel(formatZoom(clampScale(scale)));
+  }, []);
+  useTouchGestures(canvasRef, camera, viewport, schedulePaint, isMobile || isTabletTouch, handleTouchScale);
 
   /** Convert a canvas pointer event to screen coordinates. */
   const screenPosition = (event: React.PointerEvent<HTMLCanvasElement>) => ({
