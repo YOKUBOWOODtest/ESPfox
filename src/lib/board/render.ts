@@ -256,20 +256,31 @@ function drawStroke(
     context.closePath();
 
     if (style.drawStyle === "gradient-fill") {
-      // The polygon closes with a copy of its first point, so the axis runs
-      // from where the lasso started to where it ended.
-      const last = applyTransform(
-        transform,
-        points[points.length - 2].x,
-        points[points.length - 2].y,
+      // Transform all vertices first
+      const vertices = points.map((point) =>
+        applyTransform(transform, point.x, point.y),
       );
+      // The polygon closes with a copy of its first point, so use length-2 for the actual last vertex
+      const lastVertex = vertices[vertices.length - 2];
+
+      // Compute bounding box of the shape for gradient sizing
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const v of vertices) {
+        if (v.x < minX) minX = v.x;
+        if (v.y < minY) minY = v.y;
+        if (v.x > maxX) maxX = v.x;
+        if (v.y > maxY) maxY = v.y;
+      }
+      const bboxWidth = maxX - minX;
+      const bboxHeight = maxY - minY;
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      const diagonal = Math.hypot(bboxWidth, bboxHeight) || 1;
+
       const stops = normalizeGradientStops(style.gradientStops, style.color);
 
       let gradient: CanvasGradient;
       if (style.gradientType === "radial") {
-        const vertices = points.map((point) =>
-          applyTransform(transform, point.x, point.y),
-        );
         const centre = polygonCentre(vertices);
         const radius = Math.max(
           1,
@@ -292,31 +303,21 @@ function drawStroke(
           radius,
         );
       } else {
-        // Linear gradient with optional angle
+        // Linear gradient with optional angle - centered on shape's bounding box
         const angle = style.gradientAngle ?? 0;
         const rad = (angle * Math.PI) / 180;
 
-        // Calculate gradient vector based on angle
-        // Length based on the shape's diagonal for full coverage
-        const dx = last.x - first.x;
-        const dy = last.y - first.y;
-        const length = Math.hypot(dx, dy) || 1;
-
-        // Rotate the gradient direction
+        // Use diagonal of bounding box for full coverage at any angle
         const cos = Math.cos(rad);
         const sin = Math.sin(rad);
-        const gx = cos * length;
-        const gy = sin * length;
-
-        // Center the gradient on the shape's midpoint
-        const midX = (first.x + last.x) / 2;
-        const midY = (first.y + last.y) / 2;
+        const gx = cos * diagonal;
+        const gy = sin * diagonal;
 
         gradient = context.createLinearGradient(
-          midX - gx / 2,
-          midY - gy / 2,
-          midX + gx / 2,
-          midY + gy / 2,
+          centerX - gx / 2,
+          centerY - gy / 2,
+          centerX + gx / 2,
+          centerY + gy / 2,
         );
       }
 

@@ -70,7 +70,9 @@ function gradientPreviewCss(
     const cy = 50 + (center?.y ?? 0) * 50;
     return `radial-gradient(circle at ${cx}% ${cy}%, ${parts.join(", ")})`;
   }
-  return `linear-gradient(${angle ?? 90}deg, ${parts.join(", ")})`;
+  // Preview shows gradient centered, using angle (0° = horizontal left-to-right)
+  // The preview is a square, so we use the angle directly
+  return `linear-gradient(${angle ?? 0}deg, ${parts.join(", ")})`;
 }
 
 export function DrawPanel({ style, drawStyle, onStyleChange, onDrawStyleChange, onClose }: DrawPanelProps) {
