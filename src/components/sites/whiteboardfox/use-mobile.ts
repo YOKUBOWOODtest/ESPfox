@@ -36,23 +36,19 @@ export function useIsMobile(): boolean {
  */
 export const multiTouchActiveRef = { current: false };
 
-const MIN_SCALE = 0.05;
-const MAX_SCALE = 50;
-
 export function useTouchGestures(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   camera: React.MutableRefObject<{ x: number; y: number; scale: number }>,
   viewport: React.MutableRefObject<{ width: number; height: number; dpr: number }>,
   schedulePaint: () => void,
-  enabled: boolean,
-  onScaleChange?: (scale: number) => void,
+  enabled: boolean
 ) {
   useEffect(() => {
     if (!enabled || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    let lastDistance = 0;
-    let lastCenter = { x: 0, y: 0 };
+    let initialDistance = 0;
+    let initialScale = 1;
     let isPinching = false;
 
     const getTouchDistance = (touches: TouchList) => {
@@ -70,33 +66,30 @@ export function useTouchGestures(
       };
     };
 
-    /**
-     * Reads the two-finger gesture.
-     *
-     * Re-entering from a one-finger touch resets the baseline, so the board
-     * does not jump when the second finger lands.
-     */
-    const startPinch = (touches: TouchList) => {
-      isPinching = true;
-      multiTouchActiveRef.current = true;
-      lastDistance = Math.max(1, getTouchDistance(touches));
-      lastCenter = getTouchCenter(touches);
-    };
-
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length >= 2) {
-        startPinch(e.touches);
+        // Iniciar pinch zoom o two-finger pan
+        isPinching = true;
+        multiTouchActiveRef.current = true;
+        initialDistance = getTouchDistance(e.touches);
+        initialScale = camera.current.scale;
+
         // Prevenir scroll nativo y que React reciba pointer events
         e.preventDefault();
+        e.stopPropagation();
       }
     };
 
     const handleTouchMove = (e: TouchEvent) => {
       if (!isPinching) {
-        // Two fingers can land after a one-finger touch started.
+        // Detectar two-finger pan (iniciado después de un touch)
         if (e.touches.length >= 2) {
-          startPinch(e.touches);
+          isPinching = true;
+          multiTouchActiveRef.current = true;
+          initialDistance = getTouchDistance(e.touches);
+          initialScale = camera.current.scale;
           e.preventDefault();
+          e.stopPropagation();
         }
         return;
       }
@@ -109,46 +102,44 @@ export function useTouchGestures(
       }
 
       e.preventDefault();
+      e.stopPropagation();
 
-      const currentDistance = Math.max(1, getTouchDistance(e.touches));
+      const currentDistance = getTouchDistance(e.touches);
       const currentCenter = getTouchCenter(e.touches);
 
-      // Pan: the board follows the movement of the finger midpoint. Dividing
-      // by scale keeps the content under the fingers, whatever the zoom.
-      camera.current.x -= (currentCenter.x - lastCenter.x) / camera.current.scale;
-      camera.current.y -= (currentCenter.y - lastCenter.y) / camera.current.scale;
+      // Calcular zoom
+      const scaleFactor = currentDistance / initialDistance;
+      let newScale = initialScale * scaleFactor;
 
-      // Zoom: anchored at the current midpoint, so the point under the fingers
-      // stays put while the distance changes.
-      const nextScale = Math.min(
-        MAX_SCALE,
-        Math.max(MIN_SCALE, camera.current.scale * (currentDistance / lastDistance)),
-      );
+      // Clamp scale
+      const MIN_SCALE = 0.05;
+      const MAX_SCALE = 50;
+      newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
 
-      if (nextScale !== camera.current.scale) {
-        const canvasRect = canvas.getBoundingClientRect();
-        const screenX = currentCenter.x - canvasRect.left;
-        const screenY = currentCenter.y - canvasRect.top;
+      // Zoom anclado al centro de los dos dedos (en coordenadas de pantalla)
+      const canvasRect = canvas.getBoundingClientRect();
+      const screenX = currentCenter.x - canvasRect.left;
+      const screenY = currentCenter.y - canvasRect.top;
 
-        const worldBefore = {
-          x: camera.current.x + screenX / camera.current.scale,
-          y: camera.current.y + screenY / camera.current.scale,
-        };
+      // Punto mundial bajo el centro antes del zoom
+      const worldBefore = {
+        x: camera.current.x + screenX / camera.current.scale,
+        y: camera.current.y + screenY / camera.current.scale,
+      };
 
-        camera.current.scale = nextScale;
+      // Aplicar nuevo scale
+      camera.current.scale = newScale;
 
-        const worldAfter = {
-          x: camera.current.x + screenX / camera.current.scale,
-          y: camera.current.y + screenY / camera.current.scale,
-        };
+      // Punto mundial bajo el centro después del zoom
+      const worldAfter = {
+        x: camera.current.x + screenX / camera.current.scale,
+        y: camera.current.y + screenY / camera.current.scale,
+      };
 
-        camera.current.x += worldBefore.x - worldAfter.x;
-        camera.current.y += worldBefore.y - worldAfter.y;
-        onScaleChange?.(nextScale);
-      }
+      // Ajustar cámara para que el punto mundial se quede bajo los dedos
+      camera.current.x += worldBefore.x - worldAfter.x;
+      camera.current.y += worldBefore.y - worldAfter.y;
 
-      lastDistance = currentDistance;
-      lastCenter = currentCenter;
       schedulePaint();
     };
 
@@ -161,11 +152,13 @@ export function useTouchGestures(
 
     // Permitir touch-action: none en canvas pero manejar gestos nosotros
     canvas.style.touchAction = "none";
+    canvas.style.userSelect = "none";
+    canvas.style.webkitUserSelect = "none";
 
-    canvas.addEventListener("touchstart", handleTouchStart, { passive: false });
-    canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
-    canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
-    canvas.addEventListener("touchcancel", handleTouchEnd, { passive: false });
+    canvas.addEventListener("touchstart", handleTouchStart, { passive: false, capture: true });
+    canvas.addEventListener("touchmove", handleTouchMove, { passive: false, capture: true });
+    canvas.addEventListener("touchend", handleTouchEnd, { passive: false, capture: true });
+    canvas.addEventListener("touchcancel", handleTouchEnd, { passive: false, capture: true });
 
     return () => {
       canvas.removeEventListener("touchstart", handleTouchStart);

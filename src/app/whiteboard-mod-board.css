@@ -1446,26 +1446,22 @@ button.whoDrewBtn:hover {
     flex: 1;
     position: relative;
     min-height: 0;
-    order: 1;
   }
 
-  /*
-   * The toolbar is part of the column, not an overlay: the canvas and the chat
-   * bar end above it, so no control ever hides behind the buttons. DOM order
-   * puts the toolbar first, hence the explicit order.
-   */
+  /* Toolbar móvil - barra inferior fija */
   .mobile-toolbar {
-    position: relative;
-    order: 2;
-    flex: 0 0 auto;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
     z-index: 50;
     background: #fff;
     border-top: 1px solid #e0e0e0;
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.08);
-    padding: 6px 8px calc(6px + env(safe-area-inset-bottom)) 8px;
+    padding: 8px 8px calc(8px + env(safe-area-inset-bottom)) 8px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
   }
 
   .mobile-toolbar-main {
@@ -1655,15 +1651,14 @@ button.whoDrewBtn:hover {
   /* Bottom Sheets - Draw Panel & Options */
   .mobile-bottom-sheet {
     position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    left: 8px;
+    right: 8px;
     z-index: 60;
     background: #fff;
-    border-top-left-radius: 20px;
-    border-top-right-radius: 20px;
+    border-radius: 16px;
     box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.12);
-    max-height: 85vh;
+    max-height: 55vh;
     display: flex;
     flex-direction: column;
     animation: mobileSheetUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1681,18 +1676,14 @@ button.whoDrewBtn:hover {
   }
 
   .mobile-sheet-handle {
-    width: 40px;
-    height: 4px;
-    margin: 10px auto 6px;
-    background: #d0d0d0;
-    border-radius: 2px;
+    display: none;
   }
 
   .mobile-sheet-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 16px 12px;
+    padding: 10px 14px 8px;
     border-bottom: 1px solid #eee;
   }
 
@@ -1731,7 +1722,7 @@ button.whoDrewBtn:hover {
     max-width: none !important;
     left: auto !important;
     top: auto !important;
-    padding: 16px !important;
+    padding: 12px 14px !important;
     border-radius: 0 !important;
     box-shadow: none !important;
     background: transparent !important;
@@ -1761,10 +1752,9 @@ button.whoDrewBtn:hover {
     touch-action: none; /* Lo manejamos nosotros */
   }
 
-  /* Room bar - the toolbar no longer overlays it, so it keeps its own height */
+  /* Room bar - ajustar para no tapar toolbar */
   .roomChatBar {
-    height: 50px;
-    padding: 0 10px;
+    padding-bottom: calc(72px + env(safe-area-inset-bottom)) !important;
   }
 
   /* Item menu - ajustar para móvil */
@@ -1791,33 +1781,9 @@ button.whoDrewBtn:hover {
     padding-bottom: calc(16px + env(safe-area-inset-bottom)) !important;
   }
 
-  /* Zoom label - ocultar en móvil (el zoom se ajusta con los dedos) */
+  /* Zoom label - ocultar en móvil (se ve en toolbar) */
   [data-testid="zoom-label"] {
     display: none;
-  }
-
-  /* Compact board badge: the long share URL moves to the Options sheet. */
-  [data-testid="board-badge"] {
-    top: 8px !important;
-    left: 10px !important;
-    gap: 8px !important;
-    padding: 4px 8px !important;
-    font-size: 12px !important;
-    background: rgba(255, 255, 255, 0.92);
-    border: 1px solid #eeeeee;
-    border-radius: 8px;
-  }
-
-  [data-testid="board-id"] {
-    font-size: 12px;
-  }
-
-  [data-testid="board-share-path"] {
-    display: none !important;
-  }
-
-  [data-testid="board-reset-view"] {
-    font-size: 12px !important;
   }
 }
 

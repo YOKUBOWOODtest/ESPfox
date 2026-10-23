@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CogIcon,
   EraserIcon,
@@ -150,25 +150,11 @@ const ERASE_BRUSH_RADIUS = 12;
 /** Extra slack, in world units, when grabbing a selected stroke to move it. */
 const MOVE_TOLERANCE = 6;
 
-/**
- * The origin this board is served from.
- *
- * The share link has to point at the deployment the visitor is actually on:
- * localhost while developing, the Render host in production, the static host
- * for the exported demo. The server snapshot keeps the branded fallback so
- * hydration has something stable to render.
- */
-function useBoardOrigin(): string {
-  return useSyncExternalStore(
-    () => () => {},
-    () => window.location.origin,
-    () => WHITEBOARDMOD_ORIGIN,
-  );
-}
-
 export function BoardSection({ boardId }: { boardId: string }) {
   const user = useDeviceUser();
   const pro = usePro();
+  /** Track active pointers to cancel drawing when multi-touch starts (pinch/zoom). */
+  const activePointerIds = useRef<Set<number>>(new Set());
   const { ready } = useLobbyGate();
   const effectiveId = resolveBoardId(boardId);
   /**
@@ -342,8 +328,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
   /** Detecta si estamos en móvil para cambiar la UI. */
   const isMobile = useIsMobile();
-  /** The deployment the visitor is on, for the share links. */
-  const boardOrigin = useBoardOrigin();
   /** Remote cursors use the user's avatar hue, not their ink colour. */
   const cursorColor = `hsl(${avatarHue(user.id)}, 72%, 45%)`;
 
@@ -672,11 +656,52 @@ export function BoardSection({ boardId }: { boardId: string }) {
     return () => ro.disconnect();
   }, [canvasEl, schedulePaint]);
 
+  // Prevent the draw panel from opening automatically on stylus/tablet
+  useEffect(() => {
+    if (!canvasEl) return;
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType === "pen") {
+        drawPointerDownRef.current = { time: Date.now(), x: e.clientX, y: e.clientY };
+        if (drawOpenTimer.current) {
+          clearTimeout(drawOpenTimer.current);
+          drawOpenTimer.current = null;
+        }
+      }
+    };
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerType === "pen" && drawPointerDownRef.current) {
+        const dt = Date.now() - drawPointerDownRef.current.time;
+        const dx = Math.abs(e.clientX - drawPointerDownRef.current.x);
+        const dy = Math.abs(e.clientY - drawPointerDownRef.current.y);
+        if (dt > 800 || dx > 5 || dy > 5) {
+          // This was a stroke or long press - don't auto-open draw panel
+        }
+        drawPointerDownRef.current = null;
+        if (drawOpenTimer.current) {
+          clearTimeout(drawOpenTimer.current);
+          drawOpenTimer.current = null;
+        }
+      }
+    };
+    const onContextMenu = (e: MouseEvent) => {
+      // Prevent context menu on stylus long press / right click
+      if ((e as any).pointerType === "pen" || e.button === 2) {
+        e.preventDefault();
+      }
+    };
+    canvasEl.addEventListener("pointerdown", onDown, { passive: true });
+    canvasEl.addEventListener("pointerup", onUp, { passive: true });
+    canvasEl.addEventListener("contextmenu", onContextMenu);
+    return () => {
+      canvasEl.removeEventListener("pointerdown", onDown);
+      canvasEl.removeEventListener("pointerup", onUp);
+      canvasEl.removeEventListener("contextmenu", onContextMenu);
+      if (drawOpenTimer.current) clearTimeout(drawOpenTimer.current);
+    };
+  }, [canvasEl]);
+
   /** Touch gestures: pinch-to-zoom y two-finger pan (solo en móvil). */
-  const handleTouchScale = useCallback((scale: number) => {
-    setZoomLabel(formatZoom(clampScale(scale)));
-  }, []);
-  useTouchGestures(canvasRef, camera, viewport, schedulePaint, isMobile, handleTouchScale);
+  useTouchGestures(canvasRef, camera, viewport, schedulePaint, isMobile);
 
   /** Convert a canvas pointer event to screen coordinates. */
   const screenPosition = (event: React.PointerEvent<HTMLCanvasElement>) => ({
@@ -965,9 +990,23 @@ export function BoardSection({ boardId }: { boardId: string }) {
   };
 
   const begin = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    // Track active pointers for multi-touch detection
+    activePointerIds.current.add(event.pointerId);
+
+    // Ignore right click
+    if (event.button === 2) {
+      return;
+    }
+
     // Ignorar eventos pointer si hay un gesto multi-touch activo (pinch/pan con 2 dedos)
     // Esto evita que el lapiz dibuje rayas mientras se hace zoom con dos dedos.
-    if (multiTouchActiveRef.current) {
+    if (multiTouchActiveRef.current || activePointerIds.current.size >= 2) {
+      // Cancel any in-progress drawing gesture
+      if (gesture.current?.kind === "draw") {
+        gesture.current = null;
+        drafting.current = null;
+        schedulePaint();
+      }
       return;
     }
     if (event.button !== 0) return;
@@ -1188,7 +1227,12 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
   const extend = (event: React.PointerEvent<HTMLCanvasElement>) => {
     // Si se activa multi-touch durante un gesto, cancelarlo
-    if (multiTouchActiveRef.current) {
+    if (multiTouchActiveRef.current || activePointerIds.current.size >= 2) {
+      if (gesture.current?.kind === "draw") {
+        gesture.current = null;
+        drafting.current = null;
+        schedulePaint();
+      }
       gesture.current = null;
       return;
     }
@@ -1393,7 +1437,24 @@ export function BoardSection({ boardId }: { boardId: string }) {
     doc.commitStroke(closedPoints, fillStrokeStyle);
   };
 
-  const finish = () => {
+  const finish = (event?: React.PointerEvent<HTMLCanvasElement>) => {
+    if (event) {
+      activePointerIds.current.delete(event.pointerId);
+    }
+    // If any other pointers still active (multi-touch), don't commit a stroke
+    if (activePointerIds.current.size >= 1) {
+      const active = gesture.current;
+      if (active?.kind === "draw") {
+        gesture.current = null;
+        drafting.current = null;
+        schedulePaint();
+      }
+      gesture.current = null;
+      if (canvasRef.current) {
+        canvasRef.current.style.cursor = "";
+      }
+      return;
+    }
     const active = gesture.current;
     gesture.current = null;
     // The selection may have moved away from the pointer, so the grab cursor
@@ -1479,6 +1540,9 @@ export function BoardSection({ boardId }: { boardId: string }) {
   };
 
   /** Double-clicking the Draw tool opens its options panel. */
+  const drawOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const drawPointerDownRef = useRef<{ time: number; x: number; y: number } | null>(null);
+
   const handleDrawClick = () => {
     if (tool === "draw") {
       setDrawPanelOpen((open) => !open);
@@ -1694,7 +1758,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
         {/* --- The room: here.fm's half of the mix, under the board's tools --- */}
         <RoomBar
-          roomUrl={`${boardOrigin}/board/${effectiveId}`}
+          roomUrl={`${WHITEBOARDMOD_ORIGIN}/board/${effectiveId}`}
           room={room}
           mic={mic}
           chatOpen={chatOpen}
@@ -1746,8 +1810,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
           className={cursorClass}
           onPointerDown={begin}
           onPointerMove={extend}
-          onPointerUp={finish}
-          onPointerCancel={finish}
+          onPointerUp={(e) => finish(e)}
+          onPointerCancel={(e) => finish(e)}
           onWheel={handleWheel}
           onDoubleClick={(event) => {
             // On the canvas, a double click acts as a shortcut for the pencil.
@@ -1827,7 +1891,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
         style={{
           position: "absolute",
           top: 10,
-          left: isMobile ? 10 : 150,
+          left: 150,
           display: "flex",
           gap: 12,
           alignItems: "center",
@@ -1837,20 +1901,18 @@ export function BoardSection({ boardId }: { boardId: string }) {
         data-testid="board-badge"
       >
         <strong data-testid="board-id">{board.id}</strong>
-        {!isMobile && (
-          <button
-            type="button"
-            className="text-[13px] underline"
-            style={{ color: "#0066cc", cursor: "pointer", background: "none", border: 0, padding: 0 }}
-            onClick={() => {
-              const url = `${boardOrigin}/board/${board.id}`;
-              navigator.clipboard?.writeText(url).catch(() => undefined);
-            }}
-            data-testid="board-share-path"
-          >
-            {`${boardOrigin}/board/${board.id}`}
-          </button>
-        )}
+        <button
+          type="button"
+          className="text-[13px] underline"
+          style={{ color: "#0066cc", cursor: "pointer", background: "none", border: 0, padding: 0 }}
+          onClick={() => {
+            const url = `${WHITEBOARDMOD_ORIGIN}/board/${board.id}`;
+            navigator.clipboard?.writeText(url).catch(() => undefined);
+          }}
+          data-testid="board-share-path"
+        >
+          {`${WHITEBOARDMOD_ORIGIN}/board/${board.id}`}
+        </button>
         <button
           type="button"
           className="text-[13px] underline"
@@ -1858,9 +1920,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
           onClick={resetView}
           data-testid="board-reset-view"
         >
-          {!isMobile ? "Reset view" : "Ajustar"}
+          Reset view
         </button>
-      {!isMobile && (
         <span
           data-testid="zoom-label"
           style={{
@@ -1872,18 +1933,6 @@ export function BoardSection({ boardId }: { boardId: string }) {
         >
           {zoomLabel}
         </span>
-      )}
-      {isMobile && (
-        <button
-          type="button"
-          className="text-[12px] underline"
-          style={{ color: "#0066cc", cursor: "pointer", background: "none", border: 0, padding: 0 }}
-          onClick={resetView}
-          aria-label="Reset view"
-        >
-          Ajustar vista
-        </button>
-      )}
       </div>
     </div>
   );

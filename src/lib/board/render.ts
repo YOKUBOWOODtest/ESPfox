@@ -276,6 +276,8 @@ function drawStroke(
       const vertices = points.map((point) =>
         applyTransform(transform, point.x, point.y),
       );
+      // The polygon closes with a copy of its first point, so use length-2 for the actual last vertex
+      const lastVertex = vertices[vertices.length - 2];
 
       // Compute bounding box of the shape for gradient sizing
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
