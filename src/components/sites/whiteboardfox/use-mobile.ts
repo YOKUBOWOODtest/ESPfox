@@ -36,19 +36,23 @@ export function useIsMobile(): boolean {
  */
 export const multiTouchActiveRef = { current: false };
 
+const MIN_SCALE = 0.05;
+const MAX_SCALE = 50;
+
 export function useTouchGestures(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   camera: React.MutableRefObject<{ x: number; y: number; scale: number }>,
   viewport: React.MutableRefObject<{ width: number; height: number; dpr: number }>,
   schedulePaint: () => void,
-  enabled: boolean
+  enabled: boolean,
+  onScaleChange?: (scale: number) => void,
 ) {
   useEffect(() => {
     if (!enabled || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    let initialDistance = 0;
-    let initialScale = 1;
+    let lastDistance = 0;
+    let lastCenter = { x: 0, y: 0 };
     let isPinching = false;
 
     const getTouchDistance = (touches: TouchList) => {
@@ -66,14 +70,22 @@ export function useTouchGestures(
       };
     };
 
+    /**
+     * Reads the two-finger gesture.
+     *
+     * Re-entering from a one-finger touch resets the baseline, so the board
+     * does not jump when the second finger lands.
+     */
+    const startPinch = (touches: TouchList) => {
+      isPinching = true;
+      multiTouchActiveRef.current = true;
+      lastDistance = Math.max(1, getTouchDistance(touches));
+      lastCenter = getTouchCenter(touches);
+    };
+
     const handleTouchStart = (e: TouchEvent) => {
       if (e.touches.length >= 2) {
-        // Iniciar pinch zoom o two-finger pan
-        isPinching = true;
-        multiTouchActiveRef.current = true;
-        initialDistance = getTouchDistance(e.touches);
-        initialScale = camera.current.scale;
-
+        startPinch(e.touches);
         // Prevenir scroll nativo y que React reciba pointer events
         e.preventDefault();
       }
@@ -81,12 +93,9 @@ export function useTouchGestures(
 
     const handleTouchMove = (e: TouchEvent) => {
       if (!isPinching) {
-        // Detectar two-finger pan (iniciado después de un touch)
+        // Two fingers can land after a one-finger touch started.
         if (e.touches.length >= 2) {
-          isPinching = true;
-          multiTouchActiveRef.current = true;
-          initialDistance = getTouchDistance(e.touches);
-          initialScale = camera.current.scale;
+          startPinch(e.touches);
           e.preventDefault();
         }
         return;
@@ -101,44 +110,45 @@ export function useTouchGestures(
 
       e.preventDefault();
 
-      const currentDistance = getTouchDistance(e.touches);
+      const currentDistance = Math.max(1, getTouchDistance(e.touches));
       const currentCenter = getTouchCenter(e.touches);
 
-      // Calcular zoom
-      const scaleFactor = currentDistance / initialDistance;
-      let newScale = initialScale * scaleFactor;
+      // Pan: the board follows the movement of the finger midpoint. Dividing
+      // by scale keeps the content under the fingers, whatever the zoom.
+      camera.current.x -= (currentCenter.x - lastCenter.x) / camera.current.scale;
+      camera.current.y -= (currentCenter.y - lastCenter.y) / camera.current.scale;
 
-      // Clamp scale
-      const MIN_SCALE = 0.05;
-      const MAX_SCALE = 50;
-      newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
+      // Zoom: anchored at the current midpoint, so the point under the fingers
+      // stays put while the distance changes.
+      const nextScale = Math.min(
+        MAX_SCALE,
+        Math.max(MIN_SCALE, camera.current.scale * (currentDistance / lastDistance)),
+      );
 
-      if (newScale === camera.current.scale) return;
+      if (nextScale !== camera.current.scale) {
+        const canvasRect = canvas.getBoundingClientRect();
+        const screenX = currentCenter.x - canvasRect.left;
+        const screenY = currentCenter.y - canvasRect.top;
 
-      // Zoom anclado al centro de los dos dedos (en coordenadas de pantalla)
-      const canvasRect = canvas.getBoundingClientRect();
-      const screenX = currentCenter.x - canvasRect.left;
-      const screenY = currentCenter.y - canvasRect.top;
+        const worldBefore = {
+          x: camera.current.x + screenX / camera.current.scale,
+          y: camera.current.y + screenY / camera.current.scale,
+        };
 
-      // Punto mundial bajo el centro antes del zoom
-      const worldBefore = {
-        x: camera.current.x + screenX / camera.current.scale,
-        y: camera.current.y + screenY / camera.current.scale,
-      };
+        camera.current.scale = nextScale;
 
-      // Aplicar nuevo scale
-      camera.current.scale = newScale;
+        const worldAfter = {
+          x: camera.current.x + screenX / camera.current.scale,
+          y: camera.current.y + screenY / camera.current.scale,
+        };
 
-      // Punto mundial bajo el centro después del zoom
-      const worldAfter = {
-        x: camera.current.x + screenX / camera.current.scale,
-        y: camera.current.y + screenY / camera.current.scale,
-      };
+        camera.current.x += worldBefore.x - worldAfter.x;
+        camera.current.y += worldBefore.y - worldAfter.y;
+        onScaleChange?.(nextScale);
+      }
 
-      // Ajustar cámara para que el punto mundial se quede bajo los dedos
-      camera.current.x += worldBefore.x - worldAfter.x;
-      camera.current.y += worldBefore.y - worldAfter.y;
-
+      lastDistance = currentDistance;
+      lastCenter = currentCenter;
       schedulePaint();
     };
 

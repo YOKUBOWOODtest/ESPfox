@@ -673,7 +673,10 @@ export function BoardSection({ boardId }: { boardId: string }) {
   }, [canvasEl, schedulePaint]);
 
   /** Touch gestures: pinch-to-zoom y two-finger pan (solo en móvil). */
-  useTouchGestures(canvasRef, camera, viewport, schedulePaint, isMobile);
+  const handleTouchScale = useCallback((scale: number) => {
+    setZoomLabel(formatZoom(clampScale(scale)));
+  }, []);
+  useTouchGestures(canvasRef, camera, viewport, schedulePaint, isMobile, handleTouchScale);
 
   /** Convert a canvas pointer event to screen coordinates. */
   const screenPosition = (event: React.PointerEvent<HTMLCanvasElement>) => ({
@@ -1824,7 +1827,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
         style={{
           position: "absolute",
           top: 10,
-          left: 150,
+          left: isMobile ? 10 : 150,
           display: "flex",
           gap: 12,
           alignItems: "center",
@@ -1834,18 +1837,20 @@ export function BoardSection({ boardId }: { boardId: string }) {
         data-testid="board-badge"
       >
         <strong data-testid="board-id">{board.id}</strong>
-        <button
-          type="button"
-          className="text-[13px] underline"
-          style={{ color: "#0066cc", cursor: "pointer", background: "none", border: 0, padding: 0 }}
-          onClick={() => {
-            const url = `${boardOrigin}/board/${board.id}`;
-            navigator.clipboard?.writeText(url).catch(() => undefined);
-          }}
-          data-testid="board-share-path"
-        >
-          {`${boardOrigin}/board/${board.id}`}
-        </button>
+        {!isMobile && (
+          <button
+            type="button"
+            className="text-[13px] underline"
+            style={{ color: "#0066cc", cursor: "pointer", background: "none", border: 0, padding: 0 }}
+            onClick={() => {
+              const url = `${boardOrigin}/board/${board.id}`;
+              navigator.clipboard?.writeText(url).catch(() => undefined);
+            }}
+            data-testid="board-share-path"
+          >
+            {`${boardOrigin}/board/${board.id}`}
+          </button>
+        )}
         <button
           type="button"
           className="text-[13px] underline"
@@ -1853,8 +1858,9 @@ export function BoardSection({ boardId }: { boardId: string }) {
           onClick={resetView}
           data-testid="board-reset-view"
         >
-          Reset view
+          {!isMobile ? "Reset view" : "Ajustar"}
         </button>
+      {!isMobile && (
         <span
           data-testid="zoom-label"
           style={{
@@ -1866,6 +1872,18 @@ export function BoardSection({ boardId }: { boardId: string }) {
         >
           {zoomLabel}
         </span>
+      )}
+      {isMobile && (
+        <button
+          type="button"
+          className="text-[12px] underline"
+          style={{ color: "#0066cc", cursor: "pointer", background: "none", border: 0, padding: 0 }}
+          onClick={resetView}
+          aria-label="Reset view"
+        >
+          Ajustar vista
+        </button>
+      )}
       </div>
     </div>
   );
