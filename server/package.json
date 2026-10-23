@@ -1,0 +1,14 @@
+{
+  "name": "whiteboardmod-server",
+  "version": "1.0.0",
+  "description": "WebSocket server for whiteboardmod real-time collaboration",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

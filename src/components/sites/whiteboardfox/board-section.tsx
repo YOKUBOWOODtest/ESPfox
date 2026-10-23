@@ -163,7 +163,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
    */
   const { hostId, isHost } = useBoardHost(effectiveId, user.id);
   const board = useBoard(effectiveId, user, pro, hostId);
-  const doc = useBoardDoc();
+  const doc = useBoardDoc(effectiveId);
   /** The board's own settings: background, grid, snapping and auto-save. */
   const settings = useBoardSettings(effectiveId);
   /** Whether this browser sees the board with inverted colours. */
@@ -447,6 +447,13 @@ export function BoardSection({ boardId }: { boardId: string }) {
       selection: box,
       lasso: lasso.current ?? null,
       cursor: cursor.current,
+      remoteCursors: doc.remoteUsers.map(u => ({
+        userId: u.userId,
+        userName: u.userName,
+        color: u.color,
+        x: u.cursor.x,
+        y: u.cursor.y
+      })),
     });
   });
 
@@ -1020,6 +1027,9 @@ export function BoardSection({ boardId }: { boardId: string }) {
     const screen = screenPosition(event);
     const world = screenToWorld(camera.current, screen.x, screen.y);
 
+    // Send cursor position to other clients (throttled in hook)
+    doc.collab.sendCursor(world.x, world.y);
+
     if (active.kind === "pan") {
       camera.current = panBy(
         camera.current,
@@ -1235,6 +1245,18 @@ export function BoardSection({ boardId }: { boardId: string }) {
       // The live moves already mutated the document; commit one repaint.
       doc.endEdit();
       doc.bump();
+      
+      // Send updated selection to other clients
+      const selection = doc.selectedStrokes();
+      if (selection.length > 0) {
+        const bounds = selectionBounds(selection);
+        if (bounds) {
+          doc.collab.sendSelection({
+            bounds,
+            rotation: 0
+          });
+        }
+      }
       return;
     }
 
@@ -1249,6 +1271,18 @@ export function BoardSection({ boardId }: { boardId: string }) {
       // The live transforms already mutated the document; commit one repaint.
       doc.endEdit();
       doc.bump();
+      
+      // Send updated selection to other clients
+      const selection = doc.selectedStrokes();
+      if (selection.length > 0) {
+        const bounds = selectionBounds(selection);
+        if (bounds) {
+          doc.collab.sendSelection({
+            bounds,
+            rotation: 0 // Could track actual rotation
+          });
+        }
+      }
       return;
     }
 
@@ -1265,6 +1299,12 @@ export function BoardSection({ boardId }: { boardId: string }) {
     ) {
       doc.endEdit();
       doc.bump();
+      
+      // Send item update to other clients
+      const item = doc.items.current.find((i) => i.id === active.itemId);
+      if (item) {
+        doc.collab.sendItem(item, 'update');
+      }
       return;
     }
 

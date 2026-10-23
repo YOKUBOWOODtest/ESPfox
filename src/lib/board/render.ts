@@ -109,6 +109,14 @@ export interface RenderInput {
   lasso?: LassoPath | null;
   /** Draw the eraser brush ring under the cursor. */
   cursor?: { x: number; y: number; radius: number } | null;
+  /** Remote user cursors for collaboration. */
+  remoteCursors?: Array<{
+    userId: string;
+    userName: string;
+    color: string;
+    x: number;
+    y: number;
+  }>;
 }
 
 /** Sizes the buffer to the element box and resets the base transform. */
@@ -184,6 +192,11 @@ export function render(input: RenderInput): void {
   }
   if (input.cursor) {
     drawCursor(context, input.cursor);
+  }
+
+  // Draw remote user cursors
+  if (input.remoteCursors) {
+    drawRemoteCursors(context, camera, viewport, input.remoteCursors);
   }
 
   context.restore();
@@ -919,6 +932,66 @@ function drawCursor(
   context.lineWidth = 1;
   context.stroke();
   context.restore();
+}
+
+/** Draws remote user cursors with their names and colors. */
+function drawRemoteCursors(
+  context: CanvasRenderingContext2D,
+  camera: Camera,
+  viewport: Viewport,
+  cursors: Array<{ userId: string; userName: string; color: string; x: number; y: number }>,
+): void {
+  for (const cursor of cursors) {
+    const screenX = (cursor.x - camera.x) * camera.scale;
+    const screenY = (cursor.y - camera.y) * camera.scale;
+    
+    // Only draw if cursor is within viewport
+    if (screenX < -20 || screenX > viewport.width + 20 || screenY < -20 || screenY > viewport.height + 20) {
+      continue;
+    }
+    
+    context.save();
+    
+    // Cursor circle
+    context.beginPath();
+    context.arc(screenX, screenY, 8 / camera.scale, 0, Math.PI * 2);
+    context.fillStyle = cursor.color;
+    context.fill();
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 2 / camera.scale;
+    context.stroke();
+    
+    // User name label
+    context.font = `${12 / camera.scale}px Roboto, sans-serif`;
+    context.textAlign = "center";
+    context.textBaseline = "bottom";
+    
+    const metrics = context.measureText(cursor.userName);
+    const textWidth = metrics.width;
+    const padding = 4 / camera.scale;
+    
+    // Label background
+    context.fillStyle = cursor.color;
+    context.beginPath();
+    context.roundRect(
+      screenX - textWidth / 2 - padding,
+      screenY - 14 / camera.scale - padding * 2,
+      textWidth + padding * 2,
+      14 / camera.scale + padding * 2,
+      4 / camera.scale
+    );
+    context.fill();
+    
+    // Label text
+    context.fillStyle = "#ffffff";
+    context.fillText(
+      cursor.userName,
+      screenX,
+      screenY - 14 / camera.scale - padding
+    );
+    
+    context.restore();
+  }
 }
 
 /** Bounds of a set of strokes, for framing the selection box. */

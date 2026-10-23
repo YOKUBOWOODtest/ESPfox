@@ -15,6 +15,8 @@ import {
   type Transform,
 } from "@/lib/board/stroke";
 import type { ImportedItem } from "@/lib/board/imported";
+import { useCollaboration, type RemoteUser } from "./use-collaboration";
+import { useDeviceUser } from "./use-device-user";
 
 /**
  * Board document.
@@ -26,10 +28,8 @@ import type { ImportedItem } from "@/lib/board/imported";
  * finishing, a selection changing) bump a counter to trigger a repaint.
  */
 
-/** How many steps the undo history keeps. */
 const HISTORY_LIMIT = 50;
 
-/** The document as it was before an edit, so undo can come back to it. */
 interface DocSnapshot {
   strokes: Stroke[];
   items: ImportedItem[];
@@ -37,32 +37,24 @@ interface DocSnapshot {
   selectedItemId: string | null;
 }
 
-export function useBoardDoc() {
+export function useBoardDoc(boardId: string) {
+  const user = useDeviceUser();
   const strokes = useRef<Stroke[]>([]);
   const selectedIds = useRef<Set<string>>(new Set());
-  /** The imported media the board carries. */
   const items = useRef<ImportedItem[]>([]);
-  /** The imported item that is selected, if any. */
   const selectedItemId = useRef<string | null>(null);
-  /** Bumped whenever the document changes, so the canvas effect re-runs. */
   const [version, setVersion] = useState(0);
-  /**
-   * The undo history.
-   *
-   * A snapshot is taken *before* an edit and restored by undo, so the history
-   * holds the past rather than the present. Select gestures are grouped: the
-   * snapshot is taken when the drag starts, so sixty pointer moves are one
-   * undo step rather than sixty.
-   */
   const history = useRef<DocSnapshot[]>([]);
-  /** The snapshot of the edit currently in progress, if any. */
   const pending = useRef<DocSnapshot | null>(null);
+
+  // Collaboration state
+  const isHostRef = useRef(false);
+  const [remoteUsers, setRemoteUsers] = useState<RemoteUser[]>([]);
 
   const bump = useCallback(() => {
     setVersion((value) => value + 1);
   }, []);
 
-  /** Copies the document deeply enough to be restored later. */
   const capture = useCallback((): DocSnapshot => ({
     strokes: strokes.current.map((stroke) => ({
       ...stroke,
@@ -73,68 +65,39 @@ export function useBoardDoc() {
     selectedItemId: selectedItemId.current,
   }), []);
 
-  /**
-   * Starts an edit.
-   *
-   * Called when a gesture that changes the document begins. Everything the
-   * gesture does is then undone in one step.
-   */
   const beginEdit = useCallback(() => {
     pending.current = capture();
   }, [capture]);
 
-  /**
-   * Ends an edit.
-   *
-   * The snapshot is only kept when the document actually changed, so a click
-   * that moved nothing does not eat an undo step.
-   */
   const endEdit = useCallback(() => {
     const before = pending.current;
     pending.current = null;
-    if (!before) {
-      return;
-    }
+    if (!before) return;
     const unchanged =
       before.strokes.length === strokes.current.length &&
       before.strokes.every((stroke, index) => stroke === strokes.current[index]) &&
       before.items.length === items.current.length &&
       before.items.every((item, index) => item === items.current[index]);
-    if (unchanged) {
-      return;
-    }
+    if (unchanged) return;
     history.current.push(before);
-    if (history.current.length > HISTORY_LIMIT) {
-      history.current.shift();
-    }
+    if (history.current.length > HISTORY_LIMIT) history.current.shift();
   }, []);
 
-  /** Appends a finished stroke, or discards it when it drew nothing. */
   const commitStroke = useCallback(
     (points: Point[], style: StrokeStyle) => {
-      if (points.length === 0) {
-        return;
-      }
-      // The stroke is one undo step of its own.
+      if (points.length === 0) return;
       history.current.push(capture());
-      if (history.current.length > HISTORY_LIMIT) {
-        history.current.shift();
-      }
-      strokes.current = [...strokes.current, createStroke(points, style)];
+      if (history.current.length > HISTORY_LIMIT) history.current.shift();
+      strokes.current = [...strokes.current, createStroke(points, style, {
+        authorId: user.id,
+        authorName: user.nickname ?? 'Anonymous',
+        authorColor: `hsl(${user.id.split('-').pop() || '0'}, 70%, 50%)`
+      })];
       bump();
     },
-    [bump, capture],
+    [bump, capture, user.id, user.nickname],
   );
 
-  /**
-   * Stroke-based erasure.
-   *
-   * Every stroke touched by the cursor is removed *entirely*. This is the
-   * behaviour the source has and the opposite of the previous implementation,
-   * which painted opaque pixels over a single flat point array. Returns how
-   * many strokes were removed so the caller can decide whether to flash a
-   * message.
-   */
   const eraseAt = useCallback(
     (worldX: number, worldY: number, radius: number): number => {
       const remaining = strokes.current.filter(
@@ -143,7 +106,6 @@ export function useBoardDoc() {
       const removed = strokes.current.length - remaining.length;
       if (removed > 0) {
         strokes.current = remaining;
-        // An erased stroke must not stay in the selection.
         if (selectedIds.current.size > 0) {
           const alive = new Set(strokes.current.map((stroke) => stroke.id));
           selectedIds.current = new Set(
@@ -157,7 +119,6 @@ export function useBoardDoc() {
     [bump],
   );
 
-  /** Replaces the selection with everything the lasso touched. */
   const selectWithLasso = useCallback(
     (polygon: { x: number; y: number }[]) => {
       const ids = new Set<string>();
@@ -167,7 +128,6 @@ export function useBoardDoc() {
         }
       }
       selectedIds.current = ids;
-      // Picking up ink puts the imported media down.
       if (ids.size > 0 && selectedItemId.current !== null) {
         selectedItemId.current = null;
       }
@@ -178,21 +138,11 @@ export function useBoardDoc() {
   );
 
   const clearSelection = useCallback(() => {
-    if (selectedIds.current.size === 0) {
-      return;
-    }
+    if (selectedIds.current.size === 0) return;
     selectedIds.current = new Set();
     bump();
   }, [bump]);
 
-  /* --- Imported items ----------------------------------------------------- */
-
-  /**
-   * Adds an imported item.
-   *
-   * Like every other edit to the document, this is one undo step: the caller
-   * wraps it in `beginEdit` and `endEdit`.
-   */
   const addItem = useCallback(
     (item: ImportedItem) => {
       items.current = [...items.current, item];
@@ -201,47 +151,31 @@ export function useBoardDoc() {
     [bump],
   );
 
-  /**
-   * Changes an imported item.
-   *
-   * `live` controls whether the version counter is bumped: during a drag the
-   * caller repaints from the animation loop instead.
-   */
   const updateItem = useCallback(
     (id: string, patch: Partial<ImportedItem>, live: boolean) => {
       items.current = items.current.map((item) =>
         item.id === id ? { ...item, ...patch } : item,
       );
-      if (!live) {
-        bump();
-      }
+      if (!live) bump();
     },
     [bump],
   );
 
-  /** Removes an imported item and forgets its selection. */
   const removeItem = useCallback(
     (id: string) => {
       const remaining = items.current.filter((item) => item.id !== id);
-      if (remaining.length === items.current.length) {
-        return;
-      }
+      if (remaining.length === items.current.length) return;
       items.current = remaining;
-      if (selectedItemId.current === id) {
-        selectedItemId.current = null;
-      }
+      if (selectedItemId.current === id) selectedItemId.current = null;
       bump();
     },
     [bump],
   );
 
-  /** Copies an imported item, offset a little so both stay visible. */
   const duplicateItem = useCallback(
     (id: string) => {
       const source = items.current.find((item) => item.id === id);
-      if (!source) {
-        return;
-      }
+      if (!source) return;
       const copy: ImportedItem = {
         ...source,
         id: `${source.id}-copy-${items.current.length}`,
@@ -256,13 +190,10 @@ export function useBoardDoc() {
     [bump],
   );
 
-  /** Sends an imported item to the front or to the back of the stack. */
   const reorderItem = useCallback(
     (id: string, toFront: boolean) => {
       const source = items.current.find((item) => item.id === id);
-      if (!source) {
-        return;
-      }
+      if (!source) return;
       const rest = items.current.filter((item) => item.id !== id);
       items.current = toFront ? [...rest, source] : [source, ...rest];
       bump();
@@ -270,21 +201,11 @@ export function useBoardDoc() {
     [bump],
   );
 
-  /**
-   * Selects an imported item.
-   *
-   * The ink and the media are two different selections: picking up a picture
-   * puts the stroke selection down.
-   */
   const selectItem = useCallback(
     (id: string | null) => {
-      if (selectedItemId.current === id) {
-        return;
-      }
+      if (selectedItemId.current === id) return;
       selectedItemId.current = id;
-      if (id !== null && selectedIds.current.size > 0) {
-        selectedIds.current = new Set();
-      }
+      if (id !== null && selectedIds.current.size > 0) selectedIds.current = new Set();
       bump();
     },
     [bump],
@@ -295,26 +216,15 @@ export function useBoardDoc() {
     [],
   );
 
-  /**
-   * Applies a transform to every selected stroke.
-   *
-   * `live` controls whether the version counter is bumped: during a drag the
-   * caller repaints from the animation loop instead, so bumping 60 times a
-   * second would force needless React renders.
-   */
   const transformSelection = useCallback(
     (transform: Transform, live: boolean) => {
-      if (selectedIds.current.size === 0) {
-        return;
-      }
+      if (selectedIds.current.size === 0) return;
       strokes.current = strokes.current.map((stroke) =>
         selectedIds.current.has(stroke.id)
           ? { ...stroke, transform: multiply(transform, stroke.transform) }
           : stroke,
       );
-      if (!live) {
-        bump();
-      }
+      if (!live) bump();
     },
     [bump],
   );
@@ -340,20 +250,6 @@ export function useBoardDoc() {
     [transformSelection],
   );
 
-  /**
-   * Undoes the last edit.
-   *
-   * The history holds the document *before* each edit, so undo restores the
-   * last snapshot. That covers a drawn stroke, an erased one and — the point
-   * of the history — a change made with the Select tool, whether it moved,
-   * scaled or rotated the selection.
-   */
-  /**
-   * The document, as it is saved.
-   *
-   * The auto-save writes this to the browser's storage; the strokes and the
-   * imported media are copied, so a later edit cannot change what was saved.
-   */
   const exportDocument = useCallback(
     () => ({
       strokes: strokes.current.map((stroke) => ({
@@ -367,12 +263,6 @@ export function useBoardDoc() {
     [],
   );
 
-  /**
-   * Restores a saved document.
-   *
-   * The history is left alone: a board that is reopened starts with a clean
-   * undo history rather than one full of steps the user never took.
-   */
   const importDocument = useCallback(
     (document: { strokes: Stroke[]; items: ImportedItem[] }) => {
       strokes.current = document.strokes.map((stroke) => ({
@@ -392,11 +282,7 @@ export function useBoardDoc() {
   const undo = useCallback((): boolean => {
     const previous = history.current.pop();
     if (!previous) {
-      // Nothing to restore: fall back to the source's behaviour of dropping
-      // the most recently drawn stroke.
-      if (strokes.current.length === 0) {
-        return false;
-      }
+      if (strokes.current.length === 0) return false;
       strokes.current = strokes.current.slice(0, -1);
       bump();
       return true;
@@ -414,20 +300,274 @@ export function useBoardDoc() {
       strokes.current.length === 0 &&
       items.current.length === 0 &&
       selectedIds.current.size === 0
-    ) {
-      return;
-    }
-    // Clearing the board is undoable too.
+    ) return;
     history.current.push(capture());
-    if (history.current.length > HISTORY_LIMIT) {
-      history.current.shift();
-    }
+    if (history.current.length > HISTORY_LIMIT) history.current.shift();
     strokes.current = [];
     items.current = [];
     selectedIds.current = new Set();
     selectedItemId.current = null;
     bump();
   }, [bump, capture]);
+
+  // --- Collaboration handlers ---
+  
+  const handleRemoteStroke = useCallback(
+    (stroke: Stroke, authorId: string, authorName: string, authorColor: string) => {
+      strokes.current = [...strokes.current, { ...stroke, authorId, authorName, authorColor }];
+      bump();
+    },
+    [bump]
+  );
+
+  const handleRemoteStrokeBatch = useCallback(
+    (incomingStrokes: Stroke[], authorId: string) => {
+      strokes.current = [...strokes.current, ...incomingStrokes];
+      bump();
+    },
+    [bump]
+  );
+
+  const handleRemoteStrokeDelete = useCallback(
+    (strokeId: string, authorId: string) => {
+      strokes.current = strokes.current.filter((s) => s.id !== strokeId);
+      bump();
+    },
+    [bump]
+  );
+
+  const handleRemoteUndo = useCallback(
+    (authorId: string) => {
+      const lastIndex = strokes.current
+        .map((s) => s.authorId)
+        .lastIndexOf(authorId);
+      if (lastIndex !== -1) {
+        strokes.current = strokes.current.filter((_, i) => i !== lastIndex);
+        bump();
+      }
+    },
+    [bump]
+  );
+
+  const handleRemoteItem = useCallback(
+    (item: ImportedItem, action: 'add' | 'update' | 'remove', authorId: string) => {
+      if (action === 'add') {
+        items.current = [...items.current, item];
+      } else if (action === 'update') {
+        items.current = items.current.map((i) => (i.id === item.id ? item : i));
+      } else if (action === 'remove') {
+        items.current = items.current.filter((i) => i.id !== item.id);
+      }
+      bump();
+    },
+    [bump]
+  );
+
+  const handleRemoteItemBatch = useCallback(
+    (itemsList: ImportedItem[], authorId: string) => {
+      items.current = [...items.current, ...itemsList];
+      bump();
+    },
+    [bump]
+  );
+
+  const handleRemoteItemDelete = useCallback(
+    (itemId: string, authorId: string) => {
+      items.current = items.current.filter((i) => i.id !== itemId);
+      bump();
+    },
+    [bump]
+  );
+
+  const handleRemoteClear = useCallback(() => {
+    history.current.push(capture());
+    if (history.current.length > HISTORY_LIMIT) history.current.shift();
+    strokes.current = [];
+    items.current = [];
+    selectedIds.current = new Set();
+    selectedItemId.current = null;
+    bump();
+  }, [bump, capture]);
+
+  const handleRemoteCursor = useCallback(
+    (userId: string, cursor: { x: number; y: number }) => {
+      setRemoteUsers(prev => prev.map(u => u.userId === userId ? { ...u, cursor } : u));
+    },
+    []
+  );
+
+  const handleRemoteSelection = useCallback(
+    (userId: string, selection: any) => {
+      // Could store remote selection for display
+    },
+    []
+  );
+
+  const handleUserJoined = useCallback(
+    (user: { userId: string; userName: string; color: string; isHost: boolean }) => {
+      setRemoteUsers(prev => [...prev, { ...user, cursor: { x: 0, y: 0 } }]);
+    },
+    []
+  );
+
+  const handleUserLeft = useCallback(
+    (userId: string) => {
+      setRemoteUsers(prev => prev.filter(u => u.userId !== userId));
+    },
+    []
+  );
+
+  const handleHostChanged = useCallback(
+    (newHostId: string) => {
+      // Update host status
+    },
+    []
+  );
+
+  const handleBecameHost = useCallback(() => {
+    // We became host
+  }, []);
+
+  const handleSyncRequest = useCallback(() => {
+    // Send our document to the requesting client
+  }, []);
+
+  const handleSyncDocument = useCallback(
+    (document: { strokes: any[]; items: any[] }) => {
+      strokes.current = document.strokes.map((s: any) => ({
+        ...s,
+        points: s.points.map((p: any) => ({ ...p })),
+        style: { ...s.style },
+        transform: { ...s.transform }
+      }));
+      items.current = document.items.map((i: any) => ({ ...i }));
+      bump();
+    },
+    [bump]
+  );
+
+  const handleError = useCallback(
+    (message: string) => {
+      console.error('[Collab] Error:', message);
+    },
+    []
+  );
+
+  // Initialize collaboration
+  const collab = useCollaboration(
+    boardId,
+    user.id,
+    user.nickname ?? 'Anonymous',
+    handleRemoteStroke,
+    handleRemoteStrokeBatch,
+    handleRemoteStrokeDelete,
+    handleRemoteUndo,
+    handleRemoteItem,
+    handleRemoteItemBatch,
+    handleRemoteItemDelete,
+    handleRemoteClear,
+    handleRemoteCursor,
+    handleRemoteSelection,
+    handleUserJoined,
+    handleUserLeft,
+    handleHostChanged,
+    handleBecameHost,
+    handleSyncRequest,
+    handleSyncDocument,
+    handleError,
+    isHostRef
+  );
+
+  // Wrap commitStroke to also send to network
+  const commitStrokeWithSync = useCallback(
+    (points: Point[], style: StrokeStyle) => {
+      if (points.length === 0) return;
+      history.current.push(capture());
+      if (history.current.length > HISTORY_LIMIT) history.current.shift();
+      
+      const author = {
+        authorId: user.id,
+        authorName: user.nickname ?? 'Anonymous',
+        authorColor: `hsl(${user.id.split('-').pop() || '0'}, 70%, 50%)`
+      };
+      
+      const stroke = createStroke(points, style, author);
+      strokes.current = [...strokes.current, stroke];
+      bump();
+      
+      // Send to other clients
+      collab.sendStroke(stroke);
+    },
+    [bump, capture, user.id, user.nickname, collab]
+  );
+
+  // Wrap item operations with sync
+  const addItemWithSync = useCallback(
+    (item: ImportedItem) => {
+      items.current = [...items.current, item];
+      bump();
+      collab.sendItem(item, 'add');
+    },
+    [bump, collab]
+  );
+
+  const updateItemWithSync = useCallback(
+    (id: string, patch: Partial<ImportedItem>, live: boolean) => {
+      items.current = items.current.map((item) =>
+        item.id === id ? { ...item, ...patch } : item,
+      );
+      if (!live) bump();
+      if (!live) collab.sendItem({ ...items.current.find(i => i.id === id)!, ...patch }, 'update');
+    },
+    [bump, collab]
+  );
+
+  const removeItemWithSync = useCallback(
+    (id: string) => {
+      const item = items.current.find((item) => item.id === id);
+      const remaining = items.current.filter((item) => item.id !== id);
+      if (remaining.length === items.current.length) return;
+      items.current = remaining;
+      if (selectedItemId.current === id) selectedItemId.current = null;
+      bump();
+      if (item) collab.sendItemDelete(id);
+    },
+    [bump, collab]
+  );
+
+  const clearAllWithSync = useCallback(() => {
+    if (
+      strokes.current.length === 0 &&
+      items.current.length === 0 &&
+      selectedIds.current.size === 0
+    ) return;
+    history.current.push(capture());
+    if (history.current.length > HISTORY_LIMIT) history.current.shift();
+    strokes.current = [];
+    items.current = [];
+    selectedIds.current = new Set();
+    selectedItemId.current = null;
+    bump();
+    collab.sendClear();
+  }, [bump, capture, collab]);
+
+  const undoWithSync = useCallback((): boolean => {
+    const previous = history.current.pop();
+    if (!previous) {
+      if (strokes.current.length === 0) return false;
+      strokes.current = strokes.current.slice(0, -1);
+      bump();
+      collab.sendUndo();
+      return true;
+    }
+    strokes.current = previous.strokes;
+    items.current = previous.items;
+    selectedIds.current = previous.selectedIds;
+    selectedItemId.current = previous.selectedItemId;
+    bump();
+    collab.sendUndo();
+    return true;
+  }, [bump, collab]);
 
   return {
     strokes,
@@ -438,7 +578,7 @@ export function useBoardDoc() {
     bump,
     beginEdit,
     endEdit,
-    commitStroke,
+    commitStroke: commitStrokeWithSync,
     eraseAt,
     selectWithLasso,
     clearSelection,
@@ -446,16 +586,19 @@ export function useBoardDoc() {
     moveSelection,
     scaleSelection,
     rotateSelection,
-    undo,
-    clearAll,
-    addItem,
-    updateItem,
-    removeItem,
+    undo: undoWithSync,
+    clearAll: clearAllWithSync,
+    addItem: addItemWithSync,
+    updateItem: updateItemWithSync,
+    removeItem: removeItemWithSync,
     duplicateItem,
     reorderItem,
     selectItem,
     exportDocument,
     importDocument,
+    remoteUsers,
+    isHost: isHostRef.current,
+    collab
   };
 }
 

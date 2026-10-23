@@ -123,6 +123,10 @@ export interface Stroke {
   points: Point[];
   style: StrokeStyle;
   transform: Transform;
+  /** Author information for collaboration */
+  authorId?: string;
+  authorName?: string;
+  authorColor?: string;
 }
 
 let nextId = 0;
@@ -136,8 +140,17 @@ export function strokeId(): string {
 export function createStroke(
   points: Point[],
   style: StrokeStyle,
+  author?: { authorId: string; authorName: string; authorColor: string }
 ): Stroke {
-  return { id: strokeId(), points, style, transform: { ...IDENTITY } };
+  return { 
+    id: strokeId(), 
+    points, 
+    style, 
+    transform: { ...IDENTITY },
+    authorId: author?.authorId,
+    authorName: author?.authorName,
+    authorColor: author?.authorColor
+  };
 }
 
 /* --- Transform maths ------------------------------------------------------ */
