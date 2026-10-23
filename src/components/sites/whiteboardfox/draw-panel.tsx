@@ -56,13 +56,21 @@ function clamp(value: number, min: number, max: number): number {
  * Only the rgb prefix of each stop is used, because the alpha lives in the
  * stroke's opacity — exactly as the canvas renderer treats it.
  */
-function gradientPreviewCss(stops: GradientStop[], type: GradientType): string {
+function gradientPreviewCss(
+  stops: GradientStop[],
+  type: GradientType,
+  angle?: number,
+  center?: { x: number; y: number }
+): string {
   const parts = stops.map(
     (stop) => `${stop.color.slice(0, 7)} ${Math.round(stop.position * 100)}%`,
   );
-  return type === "radial"
-    ? `radial-gradient(circle at 50% 50%, ${parts.join(", ")})`
-    : `linear-gradient(90deg, ${parts.join(", ")})`;
+  if (type === "radial") {
+    const cx = 50 + (center?.x ?? 0) * 50;
+    const cy = 50 + (center?.y ?? 0) * 50;
+    return `radial-gradient(circle at ${cx}% ${cy}%, ${parts.join(", ")})`;
+  }
+  return `linear-gradient(${angle ?? 90}deg, ${parts.join(", ")})`;
 }
 
 export function DrawPanel({ style, drawStyle, onStyleChange, onDrawStyleChange, onClose }: DrawPanelProps) {
@@ -302,9 +310,154 @@ export function DrawPanel({ style, drawStyle, onStyleChange, onDrawStyleChange, 
                   ))}
                 </div>
 
+                {/* Angle control for linear gradient */}
+                {gradientType === "linear" && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
+                      Ángulo: <span style={{ fontWeight: 400, color: "#666" }}>{Math.round(style.gradientAngle ?? 0)}°</span>
+                    </label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <input
+                        type="range"
+                        min={-180}
+                        max={180}
+                        step={1}
+                        value={style.gradientAngle ?? 0}
+                        onChange={(e) =>
+                          onStyleChange({ ...style, gradientAngle: Number(e.target.value) })
+                        }
+                        style={{ flex: 1, accentColor: "#e0533f" }}
+                        aria-label="Ángulo del degradado lineal"
+                        data-testid="gradient-angle"
+                      />
+                      <input
+                        type="number"
+                        min={-180}
+                        max={180}
+                        step={1}
+                        value={style.gradientAngle ?? 0}
+                        onChange={(e) =>
+                          onStyleChange({ ...style, gradientAngle: Number(e.target.value) || 0 })
+                        }
+                        onBlur={(e) => {
+                          const v = Number(e.target.value);
+                          if (Number.isFinite(v)) onStyleChange({ ...style, gradientAngle: Math.max(-180, Math.min(180, v)) });
+                        }}
+                        style={{ width: 70, padding: "4px 8px", fontSize: 13, border: "1px solid #a6a6a6", borderRadius: 4 }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      {[-90, -45, 0, 45, 90, 135, 180].map((ang) => (
+                        <button
+                          key={ang}
+                          type="button"
+                          onClick={() => onStyleChange({ ...style, gradientAngle: ang })}
+                          style={{
+                            padding: "4px 10px",
+                            border: `1px solid ${style.gradientAngle === ang ? "#e0533f" : "#a6a6a6"}`,
+                            borderRadius: 4,
+                            background: style.gradientAngle === ang ? "#e0533f" : "#fff",
+                            color: style.gradientAngle === ang ? "#fff" : "#000",
+                            fontSize: 12,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {ang}°
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Center offset control for radial gradient */}
+                {gradientType === "radial" && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
+                      Centro (desplazamiento):
+                    </label>
+                    <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                      <div style={{ flex: 1, minWidth: 140 }}>
+                        <label style={{ display: "block", fontSize: 12, marginBottom: 4 }}>X: <span style={{ fontWeight: 400, color: "#666" }}>{(style.gradientCenter?.x ?? 0).toFixed(2)}</span></label>
+                        <input
+                          type="range"
+                          min={-1}
+                          max={1}
+                          step={0.05}
+                          value={style.gradientCenter?.x ?? 0}
+                          onChange={(e) =>
+                            onStyleChange({
+                              ...style,
+                              gradientCenter: { x: Number(e.target.value), y: style.gradientCenter?.y ?? 0 },
+                            })
+                          }
+                          style={{ width: "100%", accentColor: "#e0533f" }}
+                          aria-label="Desplazamiento horizontal del centro"
+                          data-testid="gradient-center-x"
+                        />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 140 }}>
+                        <label style={{ display: "block", fontSize: 12, marginBottom: 4 }}>Y: <span style={{ fontWeight: 400, color: "#666" }}>{(style.gradientCenter?.y ?? 0).toFixed(2)}</span></label>
+                        <input
+                          type="range"
+                          min={-1}
+                          max={1}
+                          step={0.05}
+                          value={style.gradientCenter?.y ?? 0}
+                          onChange={(e) =>
+                            onStyleChange({
+                              ...style,
+                              gradientCenter: { x: style.gradientCenter?.x ?? 0, y: Number(e.target.value) },
+                            })
+                          }
+                          style={{ width: "100%", accentColor: "#e0533f" }}
+                          aria-label="Desplazamiento vertical del centro"
+                          data-testid="gradient-center-y"
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                      {[
+                        { x: 0, y: 0, label: "Centro" },
+                        { x: -0.5, y: 0, label: "Izq" },
+                        { x: 0.5, y: 0, label: "Der" },
+                        { x: 0, y: -0.5, label: "Arriba" },
+                        { x: 0, y: 0.5, label: "Abajo" },
+                        { x: -0.5, y: -0.5, label: "↖" },
+                        { x: 0.5, y: -0.5, label: "↗" },
+                        { x: -0.5, y: 0.5, label: "↙" },
+                        { x: 0.5, y: 0.5, label: "↘" },
+                      ].map((pos) => (
+                        <button
+                          key={`${pos.x},${pos.y}`}
+                          type="button"
+                          onClick={() => onStyleChange({ ...style, gradientCenter: { x: pos.x, y: pos.y } })}
+                          style={{
+                            padding: "4px 10px",
+                            border: `1px solid ${style.gradientCenter?.x === pos.x && style.gradientCenter?.y === pos.y ? "#e0533f" : "#a6a6a6"}`,
+                            borderRadius: 4,
+                            background: style.gradientCenter?.x === pos.x && style.gradientCenter?.y === pos.y ? "#e0533f" : "#fff",
+                            color: style.gradientCenter?.x === pos.x && style.gradientCenter?.y === pos.y ? "#fff" : "#000",
+                            fontSize: 12,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {pos.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div
                   className="gradientPreview"
-                  style={{ background: gradientPreviewCss(gradientStops, gradientType) }}
+                  style={{
+                    background: gradientPreviewCss(
+                      gradientStops,
+                      gradientType,
+                      gradientType === "linear" ? style.gradientAngle : undefined,
+                      gradientType === "radial" ? style.gradientCenter : undefined,
+                    ),
+                  }}
                   data-testid="gradient-preview"
                 />
 

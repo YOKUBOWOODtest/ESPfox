@@ -277,20 +277,46 @@ function drawStroke(
             Math.hypot(vertex.x - centre.x, vertex.y - centre.y),
           ),
         );
+
+        // Apply center offset if specified (fraction of radius)
+        const centerOffset = style.gradientCenter ?? { x: 0, y: 0 };
+        const focalX = centre.x + centerOffset.x * radius;
+        const focalY = centre.y + centerOffset.y * radius;
+
         gradient = context.createRadialGradient(
-          centre.x,
-          centre.y,
+          focalX,
+          focalY,
           0,
           centre.x,
           centre.y,
           radius,
         );
       } else {
+        // Linear gradient with optional angle
+        const angle = style.gradientAngle ?? 0;
+        const rad = (angle * Math.PI) / 180;
+
+        // Calculate gradient vector based on angle
+        // Length based on the shape's diagonal for full coverage
+        const dx = last.x - first.x;
+        const dy = last.y - first.y;
+        const length = Math.hypot(dx, dy) || 1;
+
+        // Rotate the gradient direction
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const gx = cos * length;
+        const gy = sin * length;
+
+        // Center the gradient on the shape's midpoint
+        const midX = (first.x + last.x) / 2;
+        const midY = (first.y + last.y) / 2;
+
         gradient = context.createLinearGradient(
-          first.x,
-          first.y,
-          last.x,
-          last.y,
+          midX - gx / 2,
+          midY - gy / 2,
+          midX + gx / 2,
+          midY + gy / 2,
         );
       }
 

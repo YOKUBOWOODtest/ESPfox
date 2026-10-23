@@ -56,6 +56,18 @@ export interface StrokeStyle {
   /** Ramp projection; only read by "gradient-fill". */
   gradientType?: GradientType;
   /**
+   * Angle of the linear gradient in degrees.
+   * 0 = horizontal (left to right), 90 = vertical (top to bottom).
+   * Only used when gradientType === "linear".
+   */
+  gradientAngle?: number;
+  /**
+   * Center offset of the radial gradient as a fraction of the shape's radius.
+   * { x: 0, y: 0 } = centered; { x: 0.5, y: 0 } = shifted right by half radius.
+   * Only used when gradientType === "radial".
+   */
+  gradientCenter?: { x: number; y: number };
+  /**
    * Colour stops of the gradient, ordered by position.
    *
    * Supporting more than two colours is a whiteboardMOD extension of the
