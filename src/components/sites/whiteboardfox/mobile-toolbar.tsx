@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   UndoIcon,
+  RedoIcon,
   EraserIcon,
   MoveIcon,
   SelectIcon,
@@ -28,6 +29,7 @@ interface MobileToolbarProps {
   setStyle: (style: StrokeStyle) => void;
   setDrawStyle: (drawStyle: DrawStyle) => void;
   onUndo: () => void;
+  onRedo: () => void;
   onClear: () => void;
   isHost: boolean;
   onImport: (media: ImportedMedia) => void;
@@ -56,6 +58,7 @@ export function MobileToolbar({
   setStyle,
   setDrawStyle,
   onUndo,
+  onRedo,
   onClear,
   isHost,
   onImport,
@@ -112,17 +115,31 @@ export function MobileToolbar({
       aria-label="Herramientas de dibujo"
     >
       <div className="mobile-toolbar-main">
-        {/* Botón Undo - siempre visible */}
-        <button
-          type="button"
-          className={`mobile-tool-btn ${tool === "draw" && drawPanelOpen ? "active" : ""}`}
-          onClick={onUndo}
-          aria-label="Deshacer (Ctrl+Z)"
-          data-testid="mobile-tool-undo"
-        >
-          <UndoIcon />
-          <span className="mobile-tool-label">Deshacer</span>
-        </button>
+        {/* Botón Undo/Redo */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <button
+            type="button"
+            className="mobile-tool-btn"
+            onClick={onUndo}
+            aria-label="Deshacer (Ctrl+Z)"
+            data-testid="mobile-tool-undo"
+            style={{ height: 28, minWidth: 48, flexDirection: "row", gap: 4 }}
+          >
+            <UndoIcon />
+            <span className="mobile-tool-label">Undo</span>
+          </button>
+          <button
+            type="button"
+            className="mobile-tool-btn"
+            onClick={onRedo}
+            aria-label="Rehacer (Ctrl+Shift+Z)"
+            data-testid="mobile-tool-redo"
+            style={{ height: 28, minWidth: 48, flexDirection: "row", gap: 4 }}
+          >
+            <RedoIcon />
+            <span className="mobile-tool-label">Redo</span>
+          </button>
+        </div>
 
         {/* Herramienta principal activa - grande y prominente */}
         <button

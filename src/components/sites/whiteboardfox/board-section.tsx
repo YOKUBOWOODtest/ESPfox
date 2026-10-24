@@ -9,6 +9,7 @@ import {
   SelectIcon,
   TrashIcon,
   UndoIcon,
+  RedoIcon,
 } from "./board-icons";
 import { DrawPanel } from "./draw-panel";
 import { ImportMenu } from "./import-menu";
@@ -1567,6 +1568,10 @@ export function BoardSection({ boardId }: { boardId: string }) {
     doc.undo();
   };
 
+  const redo = () => {
+    doc.redo();
+  };
+
   /**
    * Host-only moderation.
    *
@@ -1600,6 +1605,37 @@ export function BoardSection({ boardId }: { boardId: string }) {
     doc.clearAll();
     sync.sendClear();
   };
+
+  const deleteSelection = useCallback(() => {
+    const strokeIds = [...doc.selectedIds.current];
+    const itemId = doc.selectedItemId.current;
+    if (strokeIds.length === 0 && !itemId) return;
+    doc.beginEdit();
+    if (strokeIds.length > 0) {
+      const toRemove = doc.strokes.current.filter(s => strokeIds.includes(s.id) && (s.authorId === user.id || isHost || !s.authorId));
+      for (const stroke of toRemove) {
+        const idx = doc.strokes.current.findIndex(s => s.id === stroke.id);
+        if (idx >= 0) {
+          doc.strokes.current.splice(idx, 1);
+          sync.sendStrokeRemove([stroke.id]);
+        }
+      }
+      doc.selectedIds.current.clear();
+    }
+    if (itemId) {
+      const item = doc.items.current.find(i => i.id === itemId);
+      if (item && (item.authorId === user.id || isHost || !item.authorId)) {
+        const idx = doc.items.current.findIndex(i => i.id === itemId);
+        if (idx >= 0) {
+          doc.items.current.splice(idx, 1);
+          doc.selectedItemId.current = null;
+          sync.sendItemRemove(itemId);
+        }
+      }
+    }
+    doc.bump();
+    doc.endEdit();
+  }, [doc, isHost, sync, user.id]);
 
   /**
    * Brings a piece of media onto the board.
@@ -1649,18 +1685,34 @@ export function BoardSection({ boardId }: { boardId: string }) {
         <>
         {/* --- Left menu strip: 140px, tools ------------------- */}
         <div id="menuStrip">
-        <button
-          type="button"
-          className="menu-button"
-          title="Undo the previous operation (Key Z)"
-          onClick={undo}
-          data-testid="tool-undo"
-        >
-          <span className="html-face">
-            <UndoIcon />
-            Undo
-          </span>
-        </button>
+        <div style={{ display: "flex", flexDirection: "row", width: "140px" }}>
+          <button
+            type="button"
+            className="menu-button"
+            title="Undo the previous operation (Ctrl+Z)"
+            onClick={undo}
+            data-testid="tool-undo"
+            style={{ flex: 1, width: "70px" }}
+          >
+            <span className="html-face">
+              <UndoIcon />
+              Undo
+            </span>
+          </button>
+          <button
+            type="button"
+            className="menu-button"
+            title="Redo (Ctrl+Shift+Z)"
+            onClick={redo}
+            data-testid="tool-redo"
+            style={{ flex: 1, width: "70px" }}
+          >
+            <span className="html-face">
+              <RedoIcon />
+              Redo
+            </span>
+          </button>
+        </div>
 
         <button
           type="button"
@@ -1797,6 +1849,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
           setStyle={setStyle}
           setDrawStyle={setDrawStyle}
           onUndo={undo}
+          onRedo={redo}
           onClear={clearAll}
           isHost={isHost}
           onImport={importMedia}
@@ -1832,6 +1885,21 @@ export function BoardSection({ boardId }: { boardId: string }) {
           onPointerUp={(e) => finish(e)}
           onPointerCancel={(e) => finish(e)}
           onWheel={handleWheel}
+          onKeyDown={(e) => {
+            if (e.key === "Delete" || e.key === "Backspace") {
+              deleteSelection();
+              e.preventDefault();
+            }
+            if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
+              if (e.shiftKey) {
+                redo();
+              } else {
+                undo();
+              }
+              e.preventDefault();
+            }
+          }}
+          tabIndex={0}
           onDoubleClick={(event) => {
             if ((event as any).pointerType === "pen") {
               event.preventDefault();

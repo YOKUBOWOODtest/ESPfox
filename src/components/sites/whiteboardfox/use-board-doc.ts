@@ -98,6 +98,7 @@ export function useBoardDoc(options?: BoardDocOptions) {
    * undo step rather than sixty.
    */
   const history = useRef<DocSnapshot[]>([]);
+  const redoStack = useRef<DocSnapshot[]>([]);
   /** The snapshot of the edit currently in progress, if any. */
   const pending = useRef<DocSnapshot | null>(null);
 
@@ -163,6 +164,7 @@ export function useBoardDoc(options?: BoardDocOptions) {
       return;
     }
     history.current.push(before);
+    redoStack.current = [];
     if (history.current.length > HISTORY_LIMIT) {
       history.current.shift();
     }
@@ -176,6 +178,7 @@ export function useBoardDoc(options?: BoardDocOptions) {
       }
       // The stroke is one undo step of its own.
       history.current.push(capture());
+      redoStack.current = [];
       if (history.current.length > HISTORY_LIMIT) {
         history.current.shift();
       }
@@ -586,6 +589,7 @@ export function useBoardDoc(options?: BoardDocOptions) {
   const undo = useCallback((): boolean => {
     const beforeStrokes = strokes.current;
     const beforeItems = items.current;
+    const currentSnapshot = capture();
     const previous = history.current.pop();
 
     if (!previous) {
@@ -593,6 +597,10 @@ export function useBoardDoc(options?: BoardDocOptions) {
       for (let index = beforeStrokes.length - 1; index >= 0; index -= 1) {
         const stroke = beforeStrokes[index];
         if (!stroke.authorId || stroke.authorId === selfRef.current) {
+          redoStack.current.push(currentSnapshot);
+          if (redoStack.current.length > HISTORY_LIMIT) {
+            redoStack.current.shift();
+          }
           strokes.current = beforeStrokes.filter((_, i) => i !== index);
           bump();
           callbacksRef.current?.onStrokesRemove?.([stroke.id]);
@@ -600,6 +608,11 @@ export function useBoardDoc(options?: BoardDocOptions) {
         }
       }
       return false;
+    }
+
+    redoStack.current.push(currentSnapshot);
+    if (redoStack.current.length > HISTORY_LIMIT) {
+      redoStack.current.shift();
     }
 
     const restoreStrokes = (): Stroke[] => {
@@ -704,7 +717,40 @@ export function useBoardDoc(options?: BoardDocOptions) {
     }
 
     return true;
-  }, [bump]);
+  }, [bump, capture]);
+
+  const redo = useCallback((): boolean => {
+    const currentSnapshot = capture();
+    const next = redoStack.current.pop();
+    if (!next) {
+      return false;
+    }
+
+    history.current.push(currentSnapshot);
+    if (history.current.length > HISTORY_LIMIT) {
+      history.current.shift();
+    }
+
+    strokes.current = next.strokes.map((stroke) => ({
+      ...stroke,
+      points: stroke.points.map((point) => ({ ...point })),
+      style: { ...stroke.style },
+      transform: { ...stroke.transform },
+    }));
+    items.current = next.items.map((item) => ({ ...item }));
+    selectedIds.current = new Set(next.selectedIds);
+    selectedItemId.current = next.selectedItemId;
+    bump();
+
+    // Sync restored state
+    for (const stroke of strokes.current) {
+      callbacksRef.current?.onStrokeCommit?.(stroke);
+    }
+    for (const item of items.current) {
+      callbacksRef.current?.onItemAdd?.(item);
+    }
+    return true;
+  }, [bump, capture]);
 
   const clearAll = useCallback(() => {
     if (
@@ -716,6 +762,7 @@ export function useBoardDoc(options?: BoardDocOptions) {
     }
     // Clearing the board is undoable too.
     history.current.push(capture());
+    redoStack.current = [];
     if (history.current.length > HISTORY_LIMIT) {
       history.current.shift();
     }
@@ -744,6 +791,7 @@ export function useBoardDoc(options?: BoardDocOptions) {
     scaleSelection,
     rotateSelection,
     undo,
+    redo,
     clearAll,
     addItem,
     updateItem,

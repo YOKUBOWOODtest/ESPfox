@@ -39,6 +39,10 @@ export function UndoIcon() {
   return <Image src={`${ICON_SRC}/Undo.png`} alt="" width={32} height={32} />;
 }
 
+export function RedoIcon() {
+  return <Image src={`${ICON_SRC}/Undo.png`} alt="" width={32} height={32} style={{ transform: "scaleX(-1)" }} />;
+}
+
 export function EraserIcon() {
   return <Image src={`${ICON_SRC}/Eraser.png`} alt="" width={32} height={32} />;
 }
