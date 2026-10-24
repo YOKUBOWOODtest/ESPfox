@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   CogIcon,
   EraserIcon,
@@ -31,7 +31,7 @@ import { useLobbyGate } from "./use-lobby-gate";
 import { usePro } from "./use-pro";
 import { useRoom } from "./use-room";
 import { useRoomMic } from "./use-room-mic";
-import { useIsMobile, useTouchGestures, multiTouchActiveRef } from "./use-mobile";
+import { useIsMobile, useIsTablet, useTouchLayout, useTouchGestures, multiTouchActiveRef } from "./use-mobile";
 import { useBoardSync, type BoardSync } from "./use-board-sync";
 import { WHITEBOARDMOD_ORIGIN } from "./site-header";
 import {
@@ -149,6 +149,14 @@ const ERASE_BRUSH_RADIUS = 12;
 
 /** Extra slack, in world units, when grabbing a selected stroke to move it. */
 const MOVE_TOLERANCE = 6;
+
+function useBoardOrigin(): string {
+  return useSyncExternalStore(
+    () => () => {},
+    () => window.location.origin,
+    () => WHITEBOARDMOD_ORIGIN,
+  );
+}
 
 export function BoardSection({ boardId }: { boardId: string }) {
   const user = useDeviceUser();
@@ -328,6 +336,9 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
   /** Detecta si estamos en móvil para cambiar la UI. */
   const isMobile = useIsMobile();
+  const isTablet = useIsTablet();
+  const useTouchUI = useTouchLayout();
+  const boardOrigin = useBoardOrigin();
   /** Remote cursors use the user's avatar hue, not their ink colour. */
   const cursorColor = `hsl(${avatarHue(user.id)}, 72%, 45%)`;
 
@@ -700,19 +711,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
     };
   }, [canvasEl]);
 
-  /** Touch gestures: pinch-to-zoom y two-finger pan (móviles y tablets). */
-  const isTabletTouch = useMemo(() => {
-    if (typeof window === "undefined") return false;
-    return (
-      (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0) &&
-      window.innerWidth >= 768 &&
-      window.innerWidth < 1024
-    );
-  }, []);
-  const handleTouchScale = useCallback((scale: number) => {
-    setZoomLabel(formatZoom(clampScale(scale)));
-  }, []);
-  useTouchGestures(canvasRef, camera, viewport, schedulePaint, isMobile || isTabletTouch, handleTouchScale);
+  /** Touch gestures: pinch-to-zoom y two-finger pan (solo en móvil/tablet). */
+  useTouchGestures(canvasRef, camera, viewport, schedulePaint, useTouchUI);
 
   /** Convert a canvas pointer event to screen coordinates. */
   const screenPosition = (event: React.PointerEvent<HTMLCanvasElement>) => ({
@@ -1644,8 +1644,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
   return (
     <div className="wm-board" data-testid="board">
-      {/* --- Desktop menu strip (oculto en móvil via CSS) --- */}
-      {!isMobile && (
+      {/* --- Desktop menu strip (oculto en móvil/tablet) --- */}
+      {!useTouchUI && (
         <>
         {/* --- Left menu strip: 140px, tools ------------------- */}
         <div id="menuStrip">
@@ -1777,7 +1777,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
         {/* --- The room: here.fm's half of the mix, under the board's tools --- */}
         <RoomBar
-          roomUrl={`${WHITEBOARDMOD_ORIGIN}/board/${effectiveId}`}
+          roomUrl={`${boardOrigin}/board/${effectiveId}`}
           room={room}
           mic={mic}
           chatOpen={chatOpen}
@@ -1787,8 +1787,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
       </>
       )}
 
-      {/* --- Mobile toolbar (solo en móvil) --- */}
-      {isMobile && (
+      {/* --- Mobile/tablet toolbar --- */}
+      {useTouchUI && (
         <MobileToolbar
           tool={tool}
           setTool={setTool}
@@ -1876,7 +1876,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
           })()}
       </div>
 
-      {!isMobile && drawPanelOpen && (
+      {!useTouchUI && drawPanelOpen && (
         <DrawPanel
           style={style}
           drawStyle={drawStyle}
@@ -1886,7 +1886,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
         />
       )}
 
-      {!isMobile && optionsOpen && (
+      {!useTouchUI && optionsOpen && (
         <OptionsMenu
           participants={participants}
           search={search}
@@ -1914,7 +1914,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
         style={{
           position: "absolute",
           top: 10,
-          left: 150,
+          left: useTouchUI ? 10 : 150,
           display: "flex",
           gap: 12,
           alignItems: "center",
@@ -1929,12 +1929,12 @@ export function BoardSection({ boardId }: { boardId: string }) {
           className="text-[13px] underline"
           style={{ color: "#0066cc", cursor: "pointer", background: "none", border: 0, padding: 0 }}
           onClick={() => {
-            const url = `${WHITEBOARDMOD_ORIGIN}/board/${board.id}`;
+            const url = `${boardOrigin}/board/${board.id}`;
             navigator.clipboard?.writeText(url).catch(() => undefined);
           }}
           data-testid="board-share-path"
         >
-          {`${WHITEBOARDMOD_ORIGIN}/board/${board.id}`}
+          {`${boardOrigin}/board/${board.id}`}
         </button>
         <button
           type="button"
@@ -1943,19 +1943,32 @@ export function BoardSection({ boardId }: { boardId: string }) {
           onClick={resetView}
           data-testid="board-reset-view"
         >
-          Reset view
+          {!useTouchUI ? "Reset view" : "Ajustar"}
         </button>
-        <span
-          data-testid="zoom-label"
-          style={{
-            fontVariantNumeric: "tabular-nums",
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-            minWidth: "5ch",
-            textAlign: "right",
-          }}
-        >
-          {zoomLabel}
-        </span>
+        {!useTouchUI && (
+          <span
+            data-testid="zoom-label"
+            style={{
+              fontVariantNumeric: "tabular-nums",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              minWidth: "5ch",
+              textAlign: "right",
+            }}
+          >
+            {zoomLabel}
+          </span>
+        )}
+        {useTouchUI && (
+          <button
+            type="button"
+            className="text-[12px] underline"
+            style={{ color: "#0066cc", cursor: "pointer", background: "none", border: 0, padding: 0 }}
+            onClick={resetView}
+            aria-label="Reset view"
+          >
+            Ajustar vista
+          </button>
+        )}
       </div>
     </div>
   );

@@ -13,13 +13,8 @@ export function useIsMobile(): boolean {
     const check = () => {
       const hasTouch =
         "ontouchstart" in window || navigator.maxTouchPoints > 0;
-      const maxPoints = navigator.maxTouchPoints || 0;
-      // Treat small phones as mobile UI; larger touch devices (tablets) use a
-      // hybrid touch-friendly layout.
       const isSmallScreen = window.innerWidth < 768;
-      const isMediumTouch = hasTouch && maxPoints > 0 && window.innerWidth >= 768 && window.innerWidth < 1024;
-      // Use mobile bottom toolbar only for phones; tablets keep desktop chrome but with touch gestures.
-      setIsMobile(hasTouch && isSmallScreen && !isMediumTouch);
+      setIsMobile(hasTouch && isSmallScreen);
     };
     check();
     window.addEventListener("resize", check);
@@ -27,6 +22,47 @@ export function useIsMobile(): boolean {
   }, []);
 
   return isMobile;
+}
+
+/**
+ * Detecta si el dispositivo es una tablet con pantalla táctil.
+ * Cubre Android, iPadOS, Windows con touch y otros sistemas.
+ */
+export function useIsTablet(): boolean {
+  const [isTablet, setIsTablet] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      const hasTouch =
+        "ontouchstart" in window || navigator.maxTouchPoints > 0;
+      if (!hasTouch) {
+        setIsTablet(false);
+        return;
+      }
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const minDim = Math.min(w, h);
+      const maxDim = Math.max(w, h);
+      // Tablets típicas: 768-1366px en el lado mayor
+      setIsTablet(minDim >= 600 && maxDim <= 1366);
+    };
+    check();
+    window.addEventListener("resize", check);
+    window.addEventListener("orientationchange", check);
+    return () => {
+      window.removeEventListener("resize", check);
+      window.removeEventListener("orientationchange", check);
+    };
+  }, []);
+
+  return isTablet;
+}
+
+/** Usa interfaz táctil para tablets y móviles */
+export function useTouchLayout(): boolean {
+  const isMobile = useIsMobile();
+  const isTablet = useIsTablet();
+  return isMobile || isTablet;
 }
 
 /**
@@ -46,8 +82,7 @@ export function useTouchGestures(
   camera: React.MutableRefObject<{ x: number; y: number; scale: number }>,
   viewport: React.MutableRefObject<{ width: number; height: number; dpr: number }>,
   schedulePaint: () => void,
-  enabled: boolean,
-  onScaleChange?: (scale: number) => void,
+  enabled: boolean
 ) {
   useEffect(() => {
     if (!enabled || !canvasRef.current) return;
@@ -55,7 +90,6 @@ export function useTouchGestures(
     const canvas = canvasRef.current;
     let initialDistance = 0;
     let initialScale = 1;
-    let initialCenter = { x: 0, y: 0 };
     let isPinching = false;
 
     const getTouchDistance = (touches: TouchList) => {
@@ -78,9 +112,8 @@ export function useTouchGestures(
         // Iniciar pinch zoom o two-finger pan
         isPinching = true;
         multiTouchActiveRef.current = true;
-        initialDistance = Math.max(1, getTouchDistance(e.touches));
+        initialDistance = getTouchDistance(e.touches);
         initialScale = camera.current.scale;
-        initialCenter = getTouchCenter(e.touches);
 
         // Prevenir scroll nativo y que React reciba pointer events
         e.preventDefault();
@@ -94,9 +127,8 @@ export function useTouchGestures(
         if (e.touches.length >= 2) {
           isPinching = true;
           multiTouchActiveRef.current = true;
-          initialDistance = Math.max(1, getTouchDistance(e.touches));
+          initialDistance = getTouchDistance(e.touches);
           initialScale = camera.current.scale;
-          initialCenter = getTouchCenter(e.touches);
           e.preventDefault();
           e.stopPropagation();
         }
@@ -115,10 +147,6 @@ export function useTouchGestures(
 
       const currentDistance = getTouchDistance(e.touches);
       const currentCenter = getTouchCenter(e.touches);
-
-      // Two-finger pan (move camera)
-      camera.current.x -= (currentCenter.x - initialCenter.x) / camera.current.scale;
-      camera.current.y -= (currentCenter.y - initialCenter.y) / camera.current.scale;
 
       // Calcular zoom
       const scaleFactor = currentDistance / initialDistance;
@@ -152,14 +180,6 @@ export function useTouchGestures(
       // Ajustar cámara para que el punto mundial se quede bajo los dedos
       camera.current.x += worldBefore.x - worldAfter.x;
       camera.current.y += worldBefore.y - worldAfter.y;
-
-      if (onScaleChange) {
-        onScaleChange(newScale);
-      }
-
-      initialCenter = currentCenter;
-      initialDistance = currentDistance;
-      initialScale = camera.current.scale;
 
       schedulePaint();
     };
