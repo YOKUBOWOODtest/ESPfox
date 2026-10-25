@@ -62,6 +62,8 @@ export interface UseBoardSyncOptions {
   onCursorRemove: (userId: string) => void;
   onKicked: () => void;
   onBanned: () => void;
+  /** Somebody started or stopped an audio item. */
+  onAudioPlay: (itemId: string, position: number, playing: boolean) => void;
   onError?: (message: string) => void;
 }
 
@@ -82,6 +84,11 @@ export interface BoardSync {
   sendClear: () => void;
   sendKick: (targetUserId: string) => void;
   sendBan: (targetUserId: string) => void;
+  sendAudioPlay: (
+    itemId: string,
+    position: number,
+    playing: boolean,
+  ) => void;
 }
 
 /** How often cursor and transform updates leave the device, at most. */
@@ -281,6 +288,20 @@ export function useBoardSync(options: UseBoardSyncOptions): BoardSync {
       );
     });
 
+    socket.on("audio:play", (data: {
+      itemId: string;
+      position: number;
+      playing: boolean;
+    }) => {
+      if (typeof data?.itemId === "string") {
+        optionsRef.current.onAudioPlay(
+          data.itemId,
+          Number.isFinite(data.position) ? data.position : 0,
+          Boolean(data.playing),
+        );
+      }
+    });
+
     socket.on("board:kicked", () => {
       optionsRef.current.onKicked();
     });
@@ -433,11 +454,24 @@ export function useBoardSync(options: UseBoardSyncOptions): BoardSync {
     [boardId],
   );
 
+  const sendAudioPlay = useCallback(
+    (itemId: string, position: number, playing: boolean) => {
+      socketRef.current?.emit("audio:play", {
+        boardId,
+        itemId,
+        position,
+        playing,
+      });
+    },
+    [boardId],
+  );
+
   return {
     connected,
     users,
     hostId,
     isHost,
+    sendAudioPlay,
     sendStroke,
     sendStrokeRemove,
     sendStrokeTransform,

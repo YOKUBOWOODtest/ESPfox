@@ -719,7 +719,17 @@ export function useBoardDoc(options?: BoardDocOptions) {
     return true;
   }, [bump, capture]);
 
+  /**
+   * Re-applies an edit that undo took away.
+   *
+   * Redo is as personal as undo: it brings this device's work back, but it
+   * never reaches back in time to overwrite somebody else. Remote ink that
+   * arrived after the undo stays on the board, and the differences between
+   * before and after are the only things sent to the server.
+   */
   const redo = useCallback((): boolean => {
+    const beforeStrokes = strokes.current;
+    const beforeItems = items.current;
     const currentSnapshot = capture();
     const next = redoStack.current.pop();
     if (!next) {
@@ -731,24 +741,111 @@ export function useBoardDoc(options?: BoardDocOptions) {
       history.current.shift();
     }
 
-    strokes.current = next.strokes.map((stroke) => ({
-      ...stroke,
-      points: stroke.points.map((point) => ({ ...point })),
-      style: { ...stroke.style },
-      transform: { ...stroke.transform },
-    }));
-    items.current = next.items.map((item) => ({ ...item }));
-    selectedIds.current = new Set(next.selectedIds);
+    const beforeStrokesById = new Map(
+      beforeStrokes.map((stroke) => [stroke.id, stroke]),
+    );
+    const beforeItemsById = new Map(beforeItems.map((item) => [item.id, item]));
+
+    const isRemoteStroke = (stroke: Stroke) =>
+      Boolean(stroke.authorId) && stroke.authorId !== selfRef.current;
+    const isRemoteItem = (item: ImportedItem) =>
+      Boolean(item.authorId) && item.authorId !== selfRef.current;
+
+    const restoredStrokes: Stroke[] = [];
+    const seenStrokes = new Set<string>();
+    for (const stroke of next.strokes) {
+      if (isRemoteStroke(stroke)) {
+        // A remote stroke comes back only if it is still there: redo must not
+        // resurrect something its author has since erased.
+        const live = beforeStrokesById.get(stroke.id);
+        if (live) {
+          restoredStrokes.push(live);
+          seenStrokes.add(stroke.id);
+        }
+        continue;
+      }
+      restoredStrokes.push({
+        ...stroke,
+        points: stroke.points.map((point) => ({ ...point })),
+        style: { ...stroke.style },
+        transform: { ...stroke.transform },
+      });
+      seenStrokes.add(stroke.id);
+    }
+    for (const stroke of beforeStrokes) {
+      if (seenStrokes.has(stroke.id) || !isRemoteStroke(stroke)) {
+        continue;
+      }
+      restoredStrokes.push(stroke);
+      seenStrokes.add(stroke.id);
+    }
+
+    const restoredItems: ImportedItem[] = [];
+    const seenItems = new Set<string>();
+    for (const item of next.items) {
+      if (isRemoteItem(item)) {
+        const live = beforeItemsById.get(item.id);
+        if (live) {
+          restoredItems.push(live);
+          seenItems.add(item.id);
+        }
+        continue;
+      }
+      restoredItems.push({ ...item });
+      seenItems.add(item.id);
+    }
+    for (const item of beforeItems) {
+      if (seenItems.has(item.id) || !isRemoteItem(item)) {
+        continue;
+      }
+      restoredItems.push(item);
+      seenItems.add(item.id);
+    }
+
+    strokes.current = restoredStrokes;
+    items.current = restoredItems;
+    const alive = new Set(restoredStrokes.map((stroke) => stroke.id));
+    selectedIds.current = new Set(
+      [...next.selectedIds].filter((id) => alive.has(id)),
+    );
     selectedItemId.current = next.selectedItemId;
     bump();
 
-    // Sync restored state
-    for (const stroke of strokes.current) {
-      callbacksRef.current?.onStrokeCommit?.(stroke);
+    // Only the difference goes over the wire, exactly as undo does it.
+    const afterStrokes = new Set(restoredStrokes.map((stroke) => stroke.id));
+    const removedIds = beforeStrokes
+      .filter((stroke) => !afterStrokes.has(stroke.id))
+      .map((stroke) => stroke.id);
+    if (removedIds.length > 0) {
+      callbacksRef.current?.onStrokesRemove?.(removedIds);
     }
-    for (const item of items.current) {
-      callbacksRef.current?.onItemAdd?.(item);
+    for (const stroke of restoredStrokes) {
+      const before = beforeStrokesById.get(stroke.id);
+      if (!before) {
+        callbacksRef.current?.onStrokeCommit?.(stroke);
+      } else if (
+        stroke.authorId === selfRef.current &&
+        before.transform !== stroke.transform
+      ) {
+        callbacksRef.current?.onStrokeTransform?.(stroke.id, stroke.transform);
+      }
     }
+
+    const afterItems = new Set(restoredItems.map((item) => item.id));
+    for (const item of beforeItems) {
+      if (!afterItems.has(item.id)) {
+        callbacksRef.current?.onItemRemove?.(item.id);
+      }
+    }
+    for (const item of restoredItems) {
+      const before = beforeItemsById.get(item.id);
+      if (!before) {
+        callbacksRef.current?.onItemAdd?.(item);
+      } else if (before !== item && item.authorId === selfRef.current) {
+        callbacksRef.current?.onItemUpdate?.(item.id, item);
+      }
+    }
+
     return true;
   }, [bump, capture]);
 

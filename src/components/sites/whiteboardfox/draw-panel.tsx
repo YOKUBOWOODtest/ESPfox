@@ -277,6 +277,10 @@ export function DrawPanel({ style, drawStyle, onStyleChange, onDrawStyleChange, 
                   <ColorPicker
                     value={baseHex}
                     onChange={setMainColor}
+                    onEyedropper={() => {
+                      // Eyedropper will be handled by board section
+                      window.dispatchEvent(new CustomEvent("wb:eyedropper", { detail: { target: "main" } }));
+                    }}
                   />
                 </div>
               </div>
@@ -511,6 +515,9 @@ export function DrawPanel({ style, drawStyle, onStyleChange, onDrawStyleChange, 
                       <ColorPicker
                         value={gradientStops[editingStop].color.slice(0, 7)}
                         onChange={(hex) => updateStopColor(editingStop, hex)}
+                        onEyedropper={() => {
+                          window.dispatchEvent(new CustomEvent("wb:eyedropper", { detail: { target: "stop", stopIndex: editingStop } }));
+                        }}
                       />
                     </div>
                     <button

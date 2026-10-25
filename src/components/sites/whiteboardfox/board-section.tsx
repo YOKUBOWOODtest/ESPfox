@@ -151,6 +151,34 @@ const ERASE_BRUSH_RADIUS = 12;
 /** Extra slack, in world units, when grabbing a selected stroke to move it. */
 const MOVE_TOLERANCE = 6;
 
+/**
+ * Proximity audio.
+ *
+ * A clip is at full volume while the listener's view sits on it, fades with
+ * distance, and is silent once it is far away on the board. The distances are
+ * world units, so zooming out does not make a distant clip suddenly audible.
+ */
+const AUDIO_NEAR_DISTANCE = 300;
+const AUDIO_FAR_DISTANCE = 1600;
+
+/** How loud a clip is, given where the camera is looking. */
+function proximityVolume(
+  camera: Camera,
+  viewport: Viewport,
+  item: { x: number; y: number },
+): number {
+  const centerX = camera.x + viewport.width / 2 / camera.scale;
+  const centerY = camera.y + viewport.height / 2 / camera.scale;
+  const distance = Math.hypot(item.x - centerX, item.y - centerY);
+  if (distance <= AUDIO_NEAR_DISTANCE) {
+    return 1;
+  }
+  if (distance >= AUDIO_FAR_DISTANCE) {
+    return 0;
+  }
+  return (AUDIO_FAR_DISTANCE - distance) / (AUDIO_FAR_DISTANCE - AUDIO_NEAR_DISTANCE);
+}
+
 function useBoardOrigin(): string {
   return useSyncExternalStore(
     () => () => {},
@@ -184,6 +212,15 @@ export function BoardSection({ boardId }: { boardId: string }) {
    */
   const [docReady, setDocReady] = useState(false);
   const syncRef = useRef<BoardSync | null>(null);
+  /**
+   * The handler for a clip somebody else started.
+   *
+   * The playback helpers live further down, after the refs they read, so the
+   * socket callback (which is built before them) reaches them through this.
+   */
+  const remoteAudioHandler = useRef<
+    (itemId: string, position: number, playing: boolean) => void
+  >(() => {});
   /** The host flag the document reads while deciding what may be erased. */
   const hostModeRef = useRef(false);
 
@@ -260,12 +297,14 @@ export function BoardSection({ boardId }: { boardId: string }) {
     },
     onItemRemove: (itemId) => {
       doc.removeRemoteItem(itemId);
+      remoteAudioHandler.current(itemId, 0, false);
     },
     onItemsReorder: (orderedIds) => {
       doc.applyItemOrder(orderedIds);
     },
     onBoardCleared: () => {
       doc.importDocument({ strokes: [], items: [] });
+      stopAudio();
     },
     onCursorUpdate: (userId, x, y, color, name) => {
       remoteCursors.current.set(userId, {
@@ -278,6 +317,9 @@ export function BoardSection({ boardId }: { boardId: string }) {
     },
     onCursorRemove: (userId) => {
       remoteCursors.current.delete(userId);
+    },
+    onAudioPlay: (itemId, position, playing) => {
+      remoteAudioHandler.current(itemId, position, playing);
     },
     onKicked: () => {
       window.location.href = "/lobby?from=board&kicked=1";
@@ -350,6 +392,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [zoomLabel, setZoomLabel] = useState("100%");
+  const [eyedropperMode, setEyedropperMode] = useState<{ target: "main" | "stop"; stopIndex?: number } | null>(null);
   /**
    * The three-dot menu of an imported item, and where it opens.
    *
@@ -460,6 +503,11 @@ export function BoardSection({ boardId }: { boardId: string }) {
    */
   const docStrokes = doc.strokes;
   const docSelectedIds = doc.selectedIds;
+  /** The document's latest API, for callbacks that must stay stable. */
+  const docRef = useRef(doc);
+  useEffect(() => {
+    docRef.current = doc;
+  });
   /** The imported media the board carries. */
   const docItems = doc.items;
   /** The imported item that is selected, if any. */
@@ -470,6 +518,11 @@ export function BoardSection({ boardId }: { boardId: string }) {
   const playingItemIdRef = useRef<string | null>(null);
   /** The audio element that plays an imported clip. */
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  /** The clip currently loaded in that element. */
+  const audioItemRef = useRef<string | null>(null);
+  /** A remote clip the browser refused to start until the page is touched. */
+  const pendingRemoteAudio = useRef<{ itemId: string; position: number } | null>(null);
+  const [playingItemId, setPlayingItemId] = useState<string | null>(null);
 
   useEffect(() => {
     styleRef.current = style;
@@ -569,6 +622,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
     const items = docItems.current;
     const selectedItemId = docSelectedItemId.current;
     const draftingPoints = drafting.current;
+    const playingId = playingItemIdRef.current;
 
     // The stroke being drawn is not in the document yet, so it is appended for
     // the frame only. Its id is irrelevant because it is never hit-tested here.
@@ -595,6 +649,22 @@ export function BoardSection({ boardId }: { boardId: string }) {
           bounds,
           rotation: 0,
         };
+      }
+    }
+
+    // Audio is spatial: a clip fades with how far the view is from it. The
+    // loop runs every frame anyway, so following the camera costs nothing.
+    const audio = audioRef.current;
+    if (audio && playingId && !audio.paused) {
+      const playingItem = items.find((entry) => entry.id === playingId);
+      if (playingItem) {
+        const volume = proximityVolume(
+          camera.current,
+          viewport.current,
+          playingItem,
+        );
+        audio.volume = volume;
+        audio.muted = volume <= 0.001;
       }
     }
 
@@ -697,7 +767,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
     };
     const onContextMenu = (e: MouseEvent) => {
       // Prevent context menu on stylus long press / right click
-      if ((e as any).pointerType === "pen" || e.button === 2) {
+      if ((e as PointerEvent).pointerType === "pen" || e.button === 2) {
         e.preventDefault();
       }
     };
@@ -885,6 +955,29 @@ export function BoardSection({ boardId }: { boardId: string }) {
     link.remove();
   };
 
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { target: "main" | "stop"; stopIndex?: number };
+      setEyedropperMode(detail);
+    };
+    window.addEventListener("wb:eyedropper", handler);
+    return () => window.removeEventListener("wb:eyedropper", handler);
+  }, []);
+
+  // Escape leaves the eyedropper without changing the colour.
+  useEffect(() => {
+    if (!eyedropperMode) {
+      return;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setEyedropperMode(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [eyedropperMode]);
+
   /**
    * Uses an imported picture as the visitor's avatar.
    *
@@ -921,36 +1014,171 @@ export function BoardSection({ boardId }: { boardId: string }) {
     image.src = item.src;
   };
 
-  /** Plays an imported clip, or stops it when it is already playing. */
-  const togglePlayback = (item: ImportedItem) => {
+  /**
+   * The one audio element this device plays clips through.
+   *
+   * A single element means the room never talks over itself: starting a song
+   * stops the previous one, here as well as on everybody else's screen.
+   */
+  const ensureAudio = () => {
     if (!audioRef.current) {
       const audio = new Audio();
+      audio.preload = "auto";
       audio.addEventListener("ended", () => {
         playingItemIdRef.current = null;
+        setPlayingItemId(null);
         schedulePaint();
       });
       audioRef.current = audio;
     }
+    return audioRef.current;
+  };
+
+  /** Stops this device's clip and tells nobody (used when it is deleted). */
+  const stopAudio = useCallback(() => {
     const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+    }
+    audioItemRef.current = null;
+    playingItemIdRef.current = null;
+    setPlayingItemId(null);
+    schedulePaint();
+  }, [schedulePaint, setPlayingItemId]);
+
+  /** Stops the clip when the item it belongs to is about to disappear. */
+  const stopAudioIfItem = useCallback(
+    (itemId: string) => {
+      if (
+        audioItemRef.current === itemId ||
+        playingItemIdRef.current === itemId
+      ) {
+        stopAudio();
+      }
+    },
+    [stopAudio],
+  );
+
+  /**
+   * Starts or stops a clip, locally and for the room.
+   *
+   * The command is broadcast with the position the clip was at, so every other
+   * screen starts the same song at the same point — the room hears one track,
+   * not one track per person.
+   */
+  const togglePlayback = (item: ImportedItem) => {
+    const audio = ensureAudio();
     if (playingItemIdRef.current === item.id) {
+      const position = audio.currentTime;
       audio.pause();
       playingItemIdRef.current = null;
+      setPlayingItemId(null);
+      syncRef.current?.sendAudioPlay(item.id, position, false);
       schedulePaint();
       return;
     }
     audio.pause();
     audio.src = item.src;
+    audioItemRef.current = item.id;
+    try {
+      audio.currentTime = 0;
+    } catch {
+      // A clip whose metadata has not arrived yet starts at zero by itself.
+    }
     void audio.play().then(
       () => {
         playingItemIdRef.current = item.id;
+        setPlayingItemId(item.id);
+        syncRef.current?.sendAudioPlay(item.id, audio.currentTime, true);
         schedulePaint();
       },
       () => {
         playingItemIdRef.current = null;
+        setPlayingItemId(null);
         schedulePaint();
       },
     );
   };
+
+  /**
+   * Applies a clip command that came from another device.
+   *
+   * Browsers refuse to start audio before the visitor has touched the page, so
+   * a refused play is remembered and retried on the first interaction. Nobody
+   * should have to press play on a song somebody else already started.
+   */
+  const playRemoteAudio = (
+    itemId: string,
+    position: number,
+    playing: boolean,
+  ) => {
+    if (!playing) {
+      if (audioItemRef.current === itemId) {
+        audioRef.current?.pause();
+        playingItemIdRef.current = null;
+        setPlayingItemId(null);
+        schedulePaint();
+      }
+      return;
+    }
+    const item = docItems.current.find((entry) => entry.id === itemId);
+    if (!item || (item.kind !== "audio" && item.kind !== "voice")) {
+      return;
+    }
+    const audio = ensureAudio();
+    if (audioItemRef.current !== itemId) {
+      audio.src = item.src;
+      audioItemRef.current = itemId;
+    }
+    const seek = () => {
+      try {
+        if (Math.abs(audio.currentTime - position) > 0.35) {
+          audio.currentTime = Math.max(0, position);
+        }
+      } catch {
+        // A clip whose metadata has not arrived yet cannot seek; it starts
+        // from the beginning instead, which is better than not playing at all.
+      }
+    };
+    seek();
+    void audio.play().then(
+      () => {
+        playingItemIdRef.current = itemId;
+        setPlayingItemId(itemId);
+        schedulePaint();
+      },
+      () => {
+        // Blocked by the autoplay policy: retry once the page is touched.
+        pendingRemoteAudio.current = { itemId, position };
+        playingItemIdRef.current = null;
+        setPlayingItemId(null);
+        schedulePaint();
+      },
+    );
+  };
+  // The socket callback is built before this render's helpers exist, so the
+  // latest handler is published after each render.
+  useEffect(() => {
+    remoteAudioHandler.current = playRemoteAudio;
+  });
+
+  // Autoplay policy: the first touch anywhere unlocks the pending remote clip.
+  useEffect(() => {
+    const unlock = () => {
+      const pending = pendingRemoteAudio.current;
+      if (!pending) {
+        return;
+      }
+      pendingRemoteAudio.current = null;
+      remoteAudioHandler.current(pending.itemId, pending.position, true);
+    };
+    window.addEventListener("pointerdown", unlock, { passive: true });
+    window.addEventListener("keydown", unlock);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
 
   /**
    * What the user picked from an item's three-dot menu.
@@ -994,6 +1222,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
         setItemAsAvatar(item);
         break;
       case "delete":
+        stopAudioIfItem(item.id);
         doc.removeItem(item.id);
         break;
     }
@@ -1007,6 +1236,67 @@ export function BoardSection({ boardId }: { boardId: string }) {
 
     // Ignore right click
     if (event.button === 2) {
+      return;
+    }
+
+    // Eyedropper mode: the next press on the board samples what is under it.
+    // Strokes, fills and imported pictures are all on the same canvas, so one
+    // pixel read covers every kind of colour the board can show.
+    if (eyedropperMode) {
+      event.preventDefault();
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        // The buffer is DPR-scaled; `clientX` is not.
+        const x = Math.round(
+          ((event.clientX - rect.left) / Math.max(1, rect.width)) * canvas.width,
+        );
+        const y = Math.round(
+          ((event.clientY - rect.top) / Math.max(1, rect.height)) * canvas.height,
+        );
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          let hex = "";
+          try {
+            const pixel = ctx.getImageData(x, y, 1, 1).data;
+            hex =
+              "#" +
+              [pixel[0], pixel[1], pixel[2]]
+                .map((channel) => channel.toString(16).padStart(2, "0"))
+                .join("");
+          } catch {
+            // A canvas the browser refuses to read (rare, tainted media) just
+            // leaves the colour as it was.
+            hex = "";
+          }
+          if (hex) {
+            if (eyedropperMode.target === "main") {
+              setStyle((current) => ({
+                ...current,
+                color: hex + (current.color.length > 7 ? current.color.slice(7) : "ff"),
+              }));
+            } else if (
+              eyedropperMode.target === "stop" &&
+              eyedropperMode.stopIndex !== undefined
+            ) {
+              const stopIndex = eyedropperMode.stopIndex;
+              setStyle((current) => ({
+                ...current,
+                gradientStops: (current.gradientStops ?? []).map((stop, index) =>
+                  index === stopIndex
+                    ? {
+                        ...stop,
+                        color:
+                          hex + (stop.color.length > 7 ? stop.color.slice(7) : "ff"),
+                      }
+                    : stop,
+                ),
+              }));
+            }
+          }
+        }
+      }
+      setEyedropperMode(null);
       return;
     }
 
@@ -1564,13 +1854,13 @@ export function BoardSection({ boardId }: { boardId: string }) {
     setDrawPanelOpen(false);
   };
 
-  const undo = () => {
-    doc.undo();
-  };
+  const undo = useCallback(() => {
+    docRef.current.undo();
+  }, []);
 
-  const redo = () => {
-    doc.redo();
-  };
+  const redo = useCallback(() => {
+    docRef.current.redo();
+  }, []);
 
   /**
    * Host-only moderation.
@@ -1602,6 +1892,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
     if (!isHost) {
       return;
     }
+    stopAudio();
     doc.clearAll();
     sync.sendClear();
   };
@@ -1611,16 +1902,17 @@ export function BoardSection({ boardId }: { boardId: string }) {
     const itemId = doc.selectedItemId.current;
     if (strokeIds.length === 0 && !itemId) return;
     doc.beginEdit();
+    const toRemoveStrokes: string[] = [];
     if (strokeIds.length > 0) {
       const toRemove = doc.strokes.current.filter(s => strokeIds.includes(s.id) && (s.authorId === user.id || isHost || !s.authorId));
       for (const stroke of toRemove) {
         const idx = doc.strokes.current.findIndex(s => s.id === stroke.id);
         if (idx >= 0) {
           doc.strokes.current.splice(idx, 1);
-          sync.sendStrokeRemove([stroke.id]);
+          toRemoveStrokes.push(stroke.id);
         }
       }
-      doc.selectedIds.current = new Set();
+      doc.clearSelection();
     }
     if (itemId) {
       const item = doc.items.current.find(i => i.id === itemId);
@@ -1628,14 +1920,60 @@ export function BoardSection({ boardId }: { boardId: string }) {
         const idx = doc.items.current.findIndex(i => i.id === itemId);
         if (idx >= 0) {
           doc.items.current.splice(idx, 1);
-          doc.selectedItemId.current = null;
+          doc.selectItem(null);
+          stopAudioIfItem(itemId);
           sync.sendItemRemove(itemId);
         }
       }
     }
+    if (toRemoveStrokes.length > 0) {
+      sync.sendStrokeRemove(toRemoveStrokes);
+    }
     doc.bump();
     doc.endEdit();
-  }, [doc, isHost, sync, user.id]);
+  }, [doc, isHost, sync, user.id, stopAudioIfItem]);
+
+  /**
+   * Keyboard shortcuts.
+   *
+   * Bound to the window rather than only to the canvas: a user who has just
+   * pressed the Select button has not focused the canvas, and Delete should
+   * still throw the selection away. Fields keep their own keys — typing a
+   * board name must not delete a stroke.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        if (
+          doc.selectedIds.current.size > 0 ||
+          doc.selectedItemId.current !== null
+        ) {
+          deleteSelection();
+          event.preventDefault();
+        }
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        if (event.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deleteSelection, undo, redo, doc.selectedIds, doc.selectedItemId]);
 
   /**
    * Brings a piece of media onto the board.
@@ -1724,8 +2062,8 @@ export function BoardSection({ boardId }: { boardId: string }) {
             if (e.detail > 1) return;
             handleDrawClick();
           }}
-          onDoubleClick={(e: any) => {
-            if (e.pointerType === "pen") {
+          onDoubleClick={(e) => {
+            if ((e.nativeEvent as PointerEvent).pointerType === "pen") {
               e.preventDefault();
               return;
             }
@@ -1875,33 +2213,20 @@ export function BoardSection({ boardId }: { boardId: string }) {
       )}
 
       {/* --- Canvas ------------------------------------------------------- */}
-      <div className="wm-stage" ref={stageRef}>
+      <div className="wm-stage" ref={stageRef} data-playing-audio={playingItemId ?? undefined}>
         <canvas
           ref={attachCanvas}
           id="canvasId"
           className={cursorClass}
+          style={eyedropperMode ? { cursor: "crosshair" } : undefined}
           onPointerDown={begin}
           onPointerMove={extend}
           onPointerUp={(e) => finish(e)}
           onPointerCancel={(e) => finish(e)}
           onWheel={handleWheel}
-          onKeyDown={(e) => {
-            if (e.key === "Delete" || e.key === "Backspace") {
-              deleteSelection();
-              e.preventDefault();
-            }
-            if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
-              if (e.shiftKey) {
-                redo();
-              } else {
-                undo();
-              }
-              e.preventDefault();
-            }
-          }}
           tabIndex={0}
           onDoubleClick={(event) => {
-            if ((event as any).pointerType === "pen") {
+            if ((event.nativeEvent as PointerEvent).pointerType === "pen") {
               event.preventDefault();
               return;
             }
@@ -1913,6 +2238,101 @@ export function BoardSection({ boardId }: { boardId: string }) {
           }}
           data-testid="boardCanvas"
         />
+
+        {/* A selected stroke or item can be thrown away without hunting for a
+            menu. On a keyboard the same button is Delete/Backspace. */}
+        {(doc.selectedIds.current.size > 0 || doc.selectedItemId.current) && (
+          <button
+            type="button"
+            className="selectionDeleteButton"
+            onClick={deleteSelection}
+            title="Eliminar la selección (Suprimir o Retroceso)"
+            aria-label="Eliminar la selección"
+            data-testid="selection-delete"
+            style={{
+              position: "absolute",
+              left: "50%",
+              bottom: useTouchUI ? 116 : 28,
+              transform: "translateX(-50%)",
+              zIndex: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 14px",
+              borderRadius: 999,
+              border: "1px solid #e0533f",
+              background: "#e0533f",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 600,
+              boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
+              cursor: "pointer",
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 6h18" />
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              <path d="M10 11v6" />
+              <path d="M14 11v6" />
+            </svg>
+            Eliminar
+          </button>
+        )}
+
+        {/* Eyedropper mode: the next press on the board samples its colour. */}
+        {eyedropperMode && (
+          <div
+            role="status"
+            data-testid="eyedropper-hint"
+            style={{
+              position: "absolute",
+              top: useTouchUI ? 10 : 16,
+              left: "50%",
+              transform: "translateX(-50%)",
+              zIndex: 14,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "8px 14px",
+              borderRadius: 999,
+              background: "rgba(20,20,20,0.88)",
+              color: "#fff",
+              fontSize: 13,
+              boxShadow: "0 4px 14px rgba(0,0,0,0.3)",
+              maxWidth: "calc(100% - 24px)",
+            }}
+          >
+            <span style={{ whiteSpace: "nowrap" }}>
+              Toca el pizarrón para coger el color
+            </span>
+            <button
+              type="button"
+              onClick={() => setEyedropperMode(null)}
+              style={{
+                background: "transparent",
+                border: "1px solid rgba(255,255,255,0.5)",
+                borderRadius: 999,
+                color: "#fff",
+                padding: "3px 10px",
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              Cancelar
+            </button>
+          </div>
+        )}
 
         {chatOpen && <RoomMessages messages={room.messages} />}
 

@@ -31,6 +31,10 @@ export interface ColorPickerProps {
    * the wheel greyed out rather than missing.
    */
   disabled?: boolean;
+  /**
+   * Callback to activate eyedropper. When provided, a pipette button is shown.
+   */
+  onEyedropper?: () => void;
 }
 
 const WHEEL_SIZE = 200;
@@ -109,7 +113,7 @@ function paintSquare(canvas: HTMLCanvasElement, dpr: number, hue: number): void 
   context.fillRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
 }
 
-export function ColorPicker({ value, onChange, disabled = false }: ColorPickerProps) {
+export function ColorPicker({ value, onChange, disabled = false, onEyedropper }: ColorPickerProps) {
   /**
    * The working HSV, tagged with the `value` it was derived from.
    *
@@ -130,7 +134,22 @@ export function ColorPicker({ value, onChange, disabled = false }: ColorPickerPr
   const hsv = normalise(picked.source) === normalise(value) ? picked.hsv : hexToHsv(value);
 
   const [recent, setRecent] = useState<string[]>([]);
-  const [draft, setDraft] = useState(value.replace("#", "").slice(0, 6).toUpperCase());
+  /**
+   * The hex field's text, tagged with the colour it was derived from.
+   *
+   * The eyedropper, a gradient stop switch or the toolbar can hand the wheel a
+   * colour the user never typed. While the tag matches the parent's colour the
+   * typed text wins (so a half-typed value is not clobbered); once the parent
+   * sends a different colour the field follows it.
+   */
+  const [draft, setDraft] = useState<{ source: string; text: string }>(() => ({
+    source: value,
+    text: value.replace("#", "").slice(0, 6).toUpperCase(),
+  }));
+  const draftText =
+    normalise(draft.source) === normalise(value)
+      ? draft.text
+      : value.replace("#", "").slice(0, 6).toUpperCase();
 
   const ringRef = useRef<HTMLCanvasElement>(null);
   const squareRef = useRef<HTMLCanvasElement>(null);
@@ -177,7 +196,7 @@ export function ColorPicker({ value, onChange, disabled = false }: ColorPickerPr
       // Tag the pick with the colour being emitted, so the derived value above
       // keeps using it until the parent sends something different.
       setPicked({ source: hex, hsv: clamped });
-      setDraft(hex.replace("#", "").toUpperCase());
+      setDraft({ source: hex, text: hex.replace("#", "").toUpperCase() });
       onChange(hex);
 
       if (commit && hex.toLowerCase() !== lastCommitted.current.toLowerCase()) {
@@ -305,7 +324,7 @@ export function ColorPicker({ value, onChange, disabled = false }: ColorPickerPr
     if (disabled) {
       return;
     }
-    const cleaned = draft.replace(/[^0-9a-fA-F]/g, "").slice(0, 6);
+    const cleaned = draftText.replace(/[^0-9a-fA-F]/g, "").slice(0, 6);
     // Accept 3-digit shorthand too, which artists type out of habit (#f80).
     const expanded =
       cleaned.length === 3
@@ -315,12 +334,12 @@ export function ColorPicker({ value, onChange, disabled = false }: ColorPickerPr
             .join("")
         : cleaned;
     if (expanded.length !== 6) {
-      setDraft(hex.replace("#", "").toUpperCase());
+      setDraft({ source: value, text: hex.replace("#", "").toUpperCase() });
       return;
     }
     const next = `#${expanded.toLowerCase()}`;
     setPicked({ source: next, hsv: hexToHsv(next) });
-    setDraft(expanded.toUpperCase());
+    setDraft({ source: next, text: expanded.toUpperCase() });
     onChange(next);
     lastCommitted.current = next;
     setRecent((list) => [next, ...list.filter((c) => c.toLowerCase() !== next)].slice(0, MAX_RECENT));
@@ -381,16 +400,42 @@ export function ColorPicker({ value, onChange, disabled = false }: ColorPickerPr
 
       <div className="colorWheelControls">
         <div className="colorWheelPreviewRow">
-          <span className="colorWheelPreview" style={{ background: hex }} data-testid="color-wheel-preview" />
+          <span
+            className="colorWheelPreview"
+            style={{ background: hex, position: "relative" }}
+            data-testid="color-wheel-preview"
+            onClick={onEyedropper}
+            title={onEyedropper ? "Coger color con gotero" : undefined}
+            role={onEyedropper ? "button" : undefined}
+          >
+            {onEyedropper && (
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ position: "absolute", bottom: 2, right: 2, background: "rgba(255,255,255,0.8)", borderRadius: 2, padding: 1 }}
+              >
+                <path d="m9 11-6 6v3h9l3-3" />
+                <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
+              </svg>
+            )}
+          </span>
           <label className="colorWheelHexField">
             <span className="pencilMenuLabel">Hex</span>
             <input
               type="text"
-              value={draft}
+              value={draftText}
               spellCheck={false}
               maxLength={7}
               readOnly={disabled}
-              onChange={(event) => setDraft(event.target.value.toUpperCase())}
+              onChange={(event) =>
+                setDraft({ source: value, text: event.target.value.toUpperCase() })
+              }
               onBlur={commitDraft}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -401,6 +446,49 @@ export function ColorPicker({ value, onChange, disabled = false }: ColorPickerPr
             />
           </label>
         </div>
+
+        {onEyedropper && (
+          <button
+            type="button"
+            className="colorWheelEyedropper"
+            onClick={onEyedropper}
+            disabled={disabled}
+            title="Coger un color del pizarrón"
+            data-testid="color-eyedropper"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              width: "100%",
+              minHeight: 44,
+              marginTop: 8,
+              border: "1px solid #a6a6a6",
+              borderRadius: 6,
+              background: "#fff",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 500,
+            }}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="m2 22 1-1h3l9-9" />
+              <path d="M3 21v-3l9-9" />
+              <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" />
+            </svg>
+            Gotero
+          </button>
+        )}
 
         <label className="pencilMenuSlider">
           <span className="pencilMenuLabel">
@@ -451,7 +539,7 @@ export function ColorPicker({ value, onChange, disabled = false }: ColorPickerPr
                   disabled={disabled}
                   onClick={() => {
                     setPicked({ source: entry, hsv: hexToHsv(entry) });
-                    setDraft(entry.replace("#", "").toUpperCase());
+                    setDraft({ source: entry, text: entry.replace("#", "").toUpperCase() });
                     onChange(entry);
                   }}
                 />

@@ -473,6 +473,39 @@ app.prepare().then(() => {
       socket.to(joinedBoardId).emit("item:reorder", { order });
     });
 
+    /**
+     * Audio is shared, not personal.
+     *
+     * Anybody may start a clip, and everybody receives the same command, so
+     * the room hears one song together. The position is passed along so a
+     * late joiner starts at the same point rather than at zero.
+     */
+    socket.on("audio:play", (data: unknown) => {
+      if (!joinedBoardId || !joinedUserId) {
+        return;
+      }
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const itemId = payload.itemId;
+      if (typeof itemId !== "string") {
+        return;
+      }
+      const board = boards.get(joinedBoardId);
+      if (!board) {
+        return;
+      }
+      touch(board);
+      const position =
+        typeof payload.position === "number" && Number.isFinite(payload.position)
+          ? payload.position
+          : 0;
+      const playing = Boolean(payload.playing);
+      socket.to(joinedBoardId).emit("audio:play", {
+        itemId,
+        position,
+        playing,
+      });
+    });
+
     socket.on("board:clear", () => {
       if (!joinedBoardId || !joinedUserId) {
         return;
