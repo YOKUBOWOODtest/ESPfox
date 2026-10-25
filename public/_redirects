@@ -1,0 +1,6 @@
+# Cloudflare Pages rewrite for arbitrary board ids.
+#
+# The app is a static export, so it cannot prerender every `/board/<id>`.
+# `/board/` is the shell that reads the real id from the browser URL; this rule
+# serves that shell (HTTP 200, URL unchanged, so sharing/reloading keeps the id).
+/board/*  /board/index.html  200

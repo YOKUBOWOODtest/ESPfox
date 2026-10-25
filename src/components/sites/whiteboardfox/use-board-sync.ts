@@ -122,7 +122,10 @@ export function useBoardSync(options: UseBoardSyncOptions): BoardSync {
       return;
     }
 
-    const socket = io({
+    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL?.trim() || undefined;
+    const socketPath = process.env.NEXT_PUBLIC_SOCKET_PATH?.trim() || "/socket.io";
+    const socket = io(socketUrl, {
+      path: socketPath,
       transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionDelay: 500,

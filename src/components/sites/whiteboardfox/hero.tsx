@@ -31,7 +31,11 @@ export function Hero() {
     if (!input) {
       return;
     }
-    router.push(`/board/${input.value.trim().replace(/ /g, "")}`);
+    const id = input.value.trim().replace(/ /g, "");
+    // Full navigation: static hosts only know the board shell, so the URL must
+    // reach the server's rewrite rule instead of a client-side route lookup.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.href = `/board/${id}`;
   };
 
   return (

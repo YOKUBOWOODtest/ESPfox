@@ -16,11 +16,13 @@ export const metadata: Metadata = {
 };
 
 /**
- * For GitHub Pages static export: generate a single demo board so the build succeeds.
- * For Render deployment: returns empty array to skip static generation (handled by server).
+ * Static export needs at least one concrete board path. Cloudflare Pages
+ * rewrites every `/board/<id>` to the static `/board/` shell, which reads the
+ * real id from the browser URL; the demo page is only what makes the export
+ * build. Render returns no params and handles any id dynamically.
  */
 export async function generateStaticParams() {
-  if (process.env.GITHUB_PAGES_BUILD === "true") {
+  if (process.env.STATIC_EXPORT === "true" || process.env.GITHUB_PAGES_BUILD === "true") {
     return [{ id: "demo" }];
   }
   return [];

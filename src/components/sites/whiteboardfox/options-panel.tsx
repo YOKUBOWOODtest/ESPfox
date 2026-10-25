@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { usePro } from "./use-pro";
 
@@ -28,7 +27,6 @@ export function OptionsPanel({
   onClose: () => void;
 }) {
   const pro = usePro();
-  const router = useRouter();
   const [participants, setParticipants] =
     useState<ParticipantOption>("editLimited");
   const [invitees, setInvitees] = useState(true);
@@ -50,7 +48,10 @@ export function OptionsPanel({
   /** Creates a local board, inheriting the Lobby nickname + device id. */
   const createBoard = () => {
     setCreating(true);
-    router.push("/board/new");
+    // Full navigation so a static host can rewrite `/board/new` to the board
+    // shell; a client-side push would look for a prerendered dynamic route.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.href = "/board/new";
   };
 
   return (

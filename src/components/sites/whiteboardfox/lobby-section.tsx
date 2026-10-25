@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Column } from "./column";
@@ -118,7 +117,10 @@ export function LobbySection() {
             </p>
 
             <div className="mt-[16px]">
-              <Link
+              {/* Static hosts need a full page load here: `/board/new` is a
+                  rewrite to the board shell, not a prerendered Next route. */}
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+              <a
                 href="/board/new"
                 aria-disabled={!hasNickname}
                 onClick={(event) => {
@@ -135,7 +137,7 @@ export function LobbySection() {
                 style={{ fontFamily: "Roboto, sans-serif" }}
               >
                 Crear pizarrón
-              </Link>
+              </a>
             </div>
           </div>
 
@@ -151,12 +153,12 @@ export function LobbySection() {
               <ul className="text-[16px]" style={{ lineHeight: "200%" }}>
                 {joined.map((board) => (
                   <li key={board.id}>
-                    <Link
+                    <a
                       href={`/board/${board.id}`}
                       className="text-brand underline"
                     >
                       {board.id}
-                    </Link>
+                    </a>
                   </li>
                 ))}
               </ul>

@@ -36,6 +36,7 @@ jobs:
           npm run build
         env:
           NEXT_TELEMETRY_DISABLED: 1
+          GITHUB_PAGES_BUILD: "true"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

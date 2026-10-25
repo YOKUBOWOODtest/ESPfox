@@ -1,4 +1,16 @@
 {
+  "name": "whiteboardmod-realtime",
+  "version": "1.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "description": "Standalone Socket.io backend for Whiteboard Mod (alwaysdata free plan).",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node socket.ts"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.4"
+  }
 }
