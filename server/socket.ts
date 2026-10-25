@@ -12,7 +12,8 @@
 import { createServer } from "node:http";
 import { attachRealtime } from "./realtime.ts";
 
-const hostname = process.env.IP ?? process.env.HOSTNAME ?? "0.0.0.0";
+const hostname =
+  process.env.IP ?? process.env.HOST ?? process.env.HOSTNAME ?? "0.0.0.0";
 const port = Number.parseInt(process.env.PORT ?? "3001", 10);
 
 const httpServer = createServer((request, response) => {

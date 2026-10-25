@@ -21,7 +21,23 @@ El frontend es un export estático (`out/`), así que Cloudflare lo sirve desde 
 2. Elige el plan **Free** (0 €/mes, 1 GB SSD, 256 MB RAM, 0,25 CPU).
 3. No hace falta tarjeta. alwaysdata te da una cuenta y un subdominio `TU_CUENTA.alwaysdata.net`.
 
-### 1.2 Subir el servidor
+### 1.2 Preparar SSH y Node.js
+
+Antes de subir archivos:
+
+1. En el panel de alwaysdata entra en **Remote access → SSH/SFTP**.
+2. Comprueba que existe el usuario de tu cuenta y que tiene permitida la conexión con contraseña. Si no, edítalo y actívala; si no recuerdas la contraseña, restablécala ahí.
+3. Entra en **Environment → Node.js** y selecciona **24**. Es la versión que usará `node` al ejecutar el servidor y la que permite ejecutar `socket.ts` directamente.
+
+El host SSH siempre tiene esta forma:
+
+```text
+ssh-TU_CUENTA.alwaysdata.net
+```
+
+El usuario es `TU_CUENTA`, no tu correo.
+
+### 1.3 Subir el servidor
 
 El servidor standalone son solo cuatro archivos:
 
@@ -30,34 +46,56 @@ El servidor standalone son solo cuatro archivos:
 - `server/package.json`
 - `server/package-lock.json`
 
-No subas `server/index.ts`: ese es el servidor de Render y necesita Next.js.
+No subas `server/index.ts`: ese es el servidor de Render y necesita Next.js. Tampoco subas `node_modules`.
 
-Desde tu máquina, con la cuenta y el host SSH que muestra el panel de alwaysdata:
+En Windows, abre **PowerShell** dentro de la carpeta del repo. Por ejemplo, en el Explorador de archivos entra en la carpeta, haz clic derecho y elige **Abrir en Terminal**. También puedes escribir `powershell` en la barra de direcciones de la carpeta.
 
-```bash
-ssh TU_CUENTA@ssh-TU_CUENTA.alwaysdata.net
-mkdir -p ~/www/whiteboardmod-socket
-exit
+Primero crea la carpeta remota:
+
+```powershell
+ssh TU_CUENTA@ssh-TU_CUENTA.alwaysdata.net "mkdir -p ~/www/whiteboardmod-socket"
 ```
 
-Y desde la carpeta del repo:
+La primera vez preguntará si confías en el host: escribe `yes`. Después pide la contraseña; al escribirla no se ven caracteres, es normal.
 
-```bash
-scp server/socket.ts server/realtime.ts server/package.json server/package-lock.json \
-  TU_CUENTA@ssh-TU_CUENTA.alwaysdata.net:~/www/whiteboardmod-socket/
+Ahora sube los cuatro archivos:
+
+```powershell
+scp server/socket.ts server/realtime.ts server/package.json server/package-lock.json TU_CUENTA@ssh-TU_CUENTA.alwaysdata.net:www/whiteboardmod-socket/
+```
+
+Comprueba que llegaron:
+
+```powershell
+ssh TU_CUENTA@ssh-TU_CUENTA.alwaysdata.net "ls -la ~/www/whiteboardmod-socket"
 ```
 
 Instala las dependencias en el servidor:
 
-```bash
+```powershell
 ssh TU_CUENTA@ssh-TU_CUENTA.alwaysdata.net
+```
+
+Dentro de la sesión SSH:
+
+```bash
 cd ~/www/whiteboardmod-socket
 npm ci --omit=dev
+exit
 ```
 
 `npm ci` instala únicamente `socket.io`; ocupa muy pocos megas.
 
-### 1.3 Crear el sitio Node.js
+Si prefieres no usar PowerShell, puedes usar **WinSCP**:
+
+1. Descarga <https://winscp.net/> e instálalo.
+2. Crea una sesión con protocolo **SFTP**, host `ssh-TU_CUENTA.alwaysdata.net`, puerto `22`, usuario `TU_CUENTA` y tu contraseña.
+3. Conecta y entra en `/home/TU_CUENTA`.
+4. Crea la carpeta `www/whiteboardmod-socket`.
+5. Arrastra los cuatro archivos desde la carpeta `server` de tu repo a esa carpeta remota.
+6. Para ejecutar `npm ci`, usa PowerShell/SSH o la terminal web de alwaysdata: `https://ssh-TU_CUENTA.alwaysdata.net`.
+
+### 1.4 Crear el sitio Node.js
 
 En el panel de alwaysdata:
 
@@ -65,10 +103,12 @@ En el panel de alwaysdata:
 2. Tipo: **Node.js**.
 3. Dirección: `TU_CUENTA.alwaysdata.net` (o un subdominio libre).
 4. Versión de Node.js: **24** (Node 24 ejecuta `socket.ts` directamente, sin compilar).
-5. Directorio de trabajo: `~/www/whiteboardmod-socket`.
-6. Comando: `node socket.ts`.
-7. Si el panel tiene **Idle time** o apagado por inactividad, ponlo en **0** para que el proceso no se duerma y el WebSocket siga vivo.
-8. Si el sitio se sirve bajo una ruta (por ejemplo `.../socket`) y el panel ofrece **Trim path** o “quitar el prefijo”, actívalo. Así Socket.io usa `/socket.io` en la raíz.
+5. Comando: usando la ruta absoluta, no una ruta relativa:
+   ```text
+   node /home/TU_CUENTA/www/whiteboardmod-socket/socket.ts
+   ```
+6. Si el panel tiene **Idle time** o apagado por inactividad, ponlo en **0** para que el proceso no se duerma y el WebSocket siga vivo.
+7. Si el sitio se sirve bajo una ruta (por ejemplo `.../socket`) y el panel ofrece **Trim path** o “quitar el prefijo”, actívalo. Así Socket.io usa `/socket.io` en la raíz.
 
 Guarda y espera a que arranque. Comprueba:
 
@@ -84,7 +124,7 @@ Debe responder:
 
 Si el sitio está bajo una ruta y no activaste “Trim path”, el health estará en `https://TU_CUENTA.alwaysdata.net/socket/health` y habrá que configurar `SOCKET_PATH` (ver más abajo).
 
-### 1.4 Variables opcionales del servidor
+### 1.5 Variables opcionales del servidor
 
 Se configuran en el panel del sitio (o por SSH, según alwaysdata):
 
