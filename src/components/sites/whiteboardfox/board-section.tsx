@@ -1620,7 +1620,7 @@ export function BoardSection({ boardId }: { boardId: string }) {
           sync.sendStrokeRemove([stroke.id]);
         }
       }
-      doc.selectedIds.current.clear();
+      doc.selectedIds.current = new Set();
     }
     if (itemId) {
       const item = doc.items.current.find(i => i.id === itemId);
