@@ -159,9 +159,33 @@ async function main() {
     }
     return r.result.value;
   };
-  const goto = async (url) => {
+  /**
+   * Navigates and waits for the page to be usable.
+   *
+   * On Render's free tier a sleeping service can take a minute to answer, so a
+   * fixed sleep is not enough; the caller names the selector that proves the
+   * page it wanted is on screen (or none, which waits for `load`).
+   */
+  const goto = async (url, selector) => {
     await cdp.send("Page.navigate", { url });
-    await sleep(2500);
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      await sleep(1000);
+      let ready = false;
+      try {
+        ready = await evaluate(
+          selector
+            ? `!!document.querySelector(${JSON.stringify(selector)})`
+            : `document.readyState === 'complete'`,
+        );
+      } catch {
+        // The previous document is going away; ask again next second.
+      }
+      if (ready) {
+        await sleep(1200);
+        return;
+      }
+    }
+    throw new Error(`page never became ready: ${url}`);
   };
   const mouse = async (type, x, y, buttons) => {
     await cdp.send("Input.dispatchMouseEvent", {
@@ -198,7 +222,7 @@ async function main() {
     localStorage.setItem('wf_device_id','WM-A3F9-2C71');
     localStorage.setItem('wf_pro','true'); 'ok'`);
 
-  await goto(BOARD);
+  await goto(BOARD, '[data-testid="boardCanvas"]');
   const geo = await evaluate(`(() => {
     const c = document.querySelector('[data-testid="boardCanvas"]');
     const r = c.getBoundingClientRect();
